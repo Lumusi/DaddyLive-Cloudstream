@@ -1,5 +1,5 @@
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
-import com.android.build.gradle.BaseExtension
+import com.android.build.gradle.LibraryExtension
 import org.gradle.kotlin.dsl.register
 
 buildscript {
@@ -28,8 +28,8 @@ allprojects {
 
 fun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = extensions.getByName<CloudstreamExtension>("cloudstream").configuration()
 
-fun Project.android(configuration: BaseExtension.() -> Unit) {
-    extensions.getByName<BaseExtension>("android").apply {
+fun Project.android(configuration: LibraryExtension.() -> Unit) {
+    extensions.getByName<LibraryExtension>("android").apply {
         (extensions.findByName("java") as? JavaPluginExtension)?.apply {
             // Use Java 17 toolchain even if a higher JDK runs the build.
             // We still use Java 8 for now which higher JDKs have deprecated.
