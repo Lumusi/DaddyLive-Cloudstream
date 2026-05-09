@@ -122,10 +122,6 @@ class SportsBite : MainAPI() {
                         newLiveSearchResponse(ch.name ?: "Unknown", streamUrl, TvType.Live) {
                             this.posterUrl = ch.image
                             this.posterHeaders = posterHeaders
-                            if (isIframe) {
-                                // Store stream_url as backup data for loadLinks fallback
-                                this.data = ch.stream_url ?: ""
-                            }
                         }
                     )
                 }
@@ -207,9 +203,6 @@ class SportsBite : MainAPI() {
                     newLiveSearchResponse(name, streamUrl, TvType.Live) {
                         this.posterUrl = ch.image
                         this.posterHeaders = posterHeaders
-                        if (isIframe && !ch.stream_url.isNullOrBlank()) {
-                            this.data = ch.stream_url
-                        }
                     }
                 )
             }
