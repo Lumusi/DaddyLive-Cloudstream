@@ -6,13 +6,13 @@ import android.os.Looper
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.lagradost.cloudstream3.utils.ExtractorApi
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * WebView-based extractor for resolving HLS streams from daddylive.org embed pages.
@@ -38,7 +38,6 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
                 processVideoUrl(videoUrl, callback)
             } else {
                 // Fallback: if WebView didn't find m3u8, try the URL directly
-                // The embed page iframe src itself may contain a direct stream URL
                 tryExtractDirectUrl(url, subtitleCallback, callback)
             }
         } catch (e: Exception) {
@@ -46,7 +45,7 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
         }
     }
 
-    private fun tryExtractDirectUrl(
+    private suspend fun tryExtractDirectUrl(
         url: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
@@ -73,8 +72,8 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
 
     private suspend fun getVideoUrlWithWebView(context: Context, url: String): String? {
         return withContext(Dispatchers.Main) {
-            kotlin.coroutines.suspendCancellableCoroutine<String?> { cont ->
-                val captured = java.util.concurrent.atomic.AtomicBoolean(false)
+            suspendCancellableCoroutine<String?> { cont ->
+                val captured = AtomicBoolean(false)
 
                 try {
                     val webView = WebView(context).apply {
@@ -103,7 +102,6 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
                                                 if (btn) { btn.click(); return 'clicked'; }
                                                 if (typeof jwplayer !== 'undefined' && jwplayer().play) { jwplayer().play(); return 'jwplayer'; }
                                                 if (typeof flowplayer !== 'undefined' && flowplayer().play) { flowplayer().play(); return 'flowplayer'; }
-                                                // Try clicking the first clickable element in the player area
                                                 var playerArea = document.querySelector('.jwplayer, .flowplayer, .video-js, #player, .player-container');
                                                 if (playerArea) {
                                                     var clickEvt = new MouseEvent('click', { bubbles: true });

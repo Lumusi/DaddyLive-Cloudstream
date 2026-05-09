@@ -133,7 +133,7 @@ class DaddyLive : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val idParam = url.substringAfter("id=", "").substringBefore("&")
+        val idParam = url.substringAfter("id=").substringBefore("&")
         if (idParam.isEmpty()) return null
 
         val mapper = jacksonObjectMapper().registerKotlinModule()
@@ -195,6 +195,8 @@ class DaddyLive : MainAPI() {
         @JsonProperty("event") val event: String?,
         @JsonProperty("channels") val channels: List<Channel>?,
         @JsonProperty("source") val source: String?,
+        @JsonProperty("id") val id: String?,
+        @JsonProperty("poster") val poster: String?,
         @JsonProperty("channels2") val channels2: List<Channel>?
     )
 
