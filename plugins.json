@@ -1,0 +1,106 @@
+[
+    {
+        "url": "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/aiolive.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "aiolive",
+        "internalName": "aiolive",
+        "authors": [
+            "d4d"
+        ],
+        "description": "All-in-one live sports & TV \u2014 events from DamiTV + 762+ channels from CDNLiveTV",
+        "fileSize": 71307,
+        "repositoryUrl": "https://github.com/Lumusi/DaddyLive-Cloudstream",
+        "language": "en",
+        "tvTypes": [
+            "Live"
+        ],
+        "iconUrl": "https://i.imgur.com/FetkA0F.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-90a8f8603a0320f2d2c9b3b6fc3436b13927c39f5fb6b2e9f16716e1fe422eb1"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/cdnlivetv.cs3",
+        "status": 1,
+        "version": 25,
+        "name": "cdnlivetv",
+        "internalName": "cdnlivetv",
+        "authors": [
+            "d4d"
+        ],
+        "description": "Watch live sports from 762+ global channels via CDNLiveTV (cdnlivetv.tv / api.cdnlivetv.ru)",
+        "fileSize": 46938,
+        "repositoryUrl": "https://github.com/Lumusi/DaddyLive-Cloudstream",
+        "language": "en",
+        "tvTypes": [
+            "Live"
+        ],
+        "iconUrl": "https://cdnlivetv.tv/wp-content/uploads/2024/01/cropped-icon.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-1672b7ff89550a03b258e7557654a517221eca8d84ea6209794bc47148b4549e"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/cinestream.cs3",
+        "status": 1,
+        "version": 442,
+        "name": "cinestream",
+        "internalName": "cinestream",
+        "authors": [
+            "megix"
+        ],
+        "description": "One stop solution for Movies, Series, Anime, AsianDrama and Torrents",
+        "fileSize": 634528,
+        "repositoryUrl": "https://github.com/Lumusi/DaddyLive-Cloudstream",
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "AsianDrama",
+            "Anime",
+            "Torrent"
+        ],
+        "iconUrl": "https://github.com/SaurabhKaperwan/CSX/raw/refs/heads/master/CineStream/icon.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-b93dee291650af18e59054e281af460e193f1d855eba83fa986e21971051440f"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/damitv.cs3",
+        "status": 1,
+        "version": 5,
+        "name": "damitv",
+        "internalName": "damitv",
+        "authors": [
+            "d4d"
+        ],
+        "description": "Free live sports, events & 371 Live TV channels \u2014 NFL, NBA, PL, UFC, MLB, NHL & more (dami-tv.pro)",
+        "fileSize": 45426,
+        "repositoryUrl": "https://github.com/Lumusi/DaddyLive-Cloudstream",
+        "language": "en",
+        "tvTypes": [
+            "Live"
+        ],
+        "iconUrl": "https://i.imgur.com/FetkA0F.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-1d589d30c74a9e5cce4e86095a6126c055b367c194048983d0ba773c037be264"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/xdmovies.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "xdmovies",
+        "internalName": "xdmovies",
+        "authors": [
+            "YourName"
+        ],
+        "description": "Movies and TV Series from XDMovies API",
+        "fileSize": 26192,
+        "repositoryUrl": "https://github.com/Lumusi/DaddyLive-Cloudstream",
+        "language": "en",
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "iconUrl": "https://www.google.com/s2/favicons?domain=xdmovies.com&sz=%size%",
+        "apiVersion": 1,
+        "fileHash": "sha256-2c61ff2f79fbb9040a712eab3ed2ea0635d8b1eaec23053c4d45eff6bb14900d"
+    }
+]

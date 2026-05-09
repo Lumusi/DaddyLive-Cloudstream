@@ -1,0 +1,22 @@
+[
+    {
+        "url": "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/daddylive.cs3",
+        "status": 1,
+        "version": 25,
+        "name": "daddylive",
+        "internalName": "daddylive",
+        "authors": [
+            "d4d"
+        ],
+        "description": "Watch live sports streams from daddylive.org",
+        "fileSize": 23190,
+        "repositoryUrl": "https://github.com/Lumusi/DaddyLive-Cloudstream",
+        "language": "en",
+        "tvTypes": [
+            "Live"
+        ],
+        "iconUrl": "https://daddylive.org/wp-content/uploads/2024/01/cropped-icon.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-3f45c59859d75c0abd2e88e4a3f6ea5e323fbfd7bf3fbaa556625d5dcd672d72"
+    }
+]
