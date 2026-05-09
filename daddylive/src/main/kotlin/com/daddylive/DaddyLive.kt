@@ -66,7 +66,8 @@ class DaddyLive : MainAPI() {
                     val source = event.source ?: "tv"
 
                     val channelId = firstChannel?.channel_id ?: continue
-                    val href = "${mainUrl}/embed/embed.php?id=${channelId}&player=1&source=${source}"
+                    val encodedId = java.net.URLEncoder.encode(channelId, "UTF-8")
+                    val href = "${mainUrl}/embed/embed.php?id=${encodedId}&player=1&source=${source}"
 
                     dayItems.add(
                         newLiveSearchResponse(title, href, TvType.Live) {
@@ -111,7 +112,8 @@ class DaddyLive : MainAPI() {
                     val firstChannel = event.channels?.firstOrNull()
                     val source = event.source ?: "tv"
                     val channelId = firstChannel?.channel_id ?: continue
-                    val href = "${mainUrl}/embed/embed.php?id=${channelId}&player=1&source=${source}"
+                    val encodedId = java.net.URLEncoder.encode(channelId, "UTF-8")
+                    val href = "${mainUrl}/embed/embed.php?id=${encodedId}&player=1&source=${source}"
 
                     results.add(
                         newLiveSearchResponse(title, href, TvType.Live) {
@@ -132,7 +134,6 @@ class DaddyLive : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val idParam = url.substringAfter("id=", "").substringBefore("&")
-        val sourceParam = url.substringAfter("source=", "").substringBefore("&")
         if (idParam.isEmpty()) return null
 
         val mapper = jacksonObjectMapper().registerKotlinModule()
