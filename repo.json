@@ -4,6 +4,6 @@
   "description": "Live sports streaming extensions (DaddyLive, SportsBite)",
   "manifestVersion": 1,
   "pluginLists": [
-    "https://raw.githubusercontent.com/Lumusi/SportCDN-Cloudstream/builds/plugins.json"
+    "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/plugins.json"
   ]
 }
