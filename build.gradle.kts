@@ -1,5 +1,5 @@
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
-import com.android.build.gradle.LibraryExtension
+import com.android.build.api.dsl.LibraryExtension
 import org.gradle.kotlin.dsl.register
 
 buildscript {
@@ -59,7 +59,6 @@ subprojects {
         defaultConfig {
             minSdk = 21
             compileSdkVersion(36)
-            targetSdk = 36
         }
 
         compileOptions {
