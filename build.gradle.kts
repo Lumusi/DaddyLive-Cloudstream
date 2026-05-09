@@ -6,11 +6,13 @@ buildscript {
     repositories {
         google()
         mavenCentral()
+        // Shitpack repo which contains our tools and dependencies
         maven("https://jitpack.io")
     }
 
     dependencies {
         classpath("com.android.tools.build:gradle:8.13.2")
+        // Cloudstream gradle plugin which makes everything work and builds plugins
         classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0")
     }
@@ -29,6 +31,8 @@ fun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = extens
 fun Project.android(configuration: BaseExtension.() -> Unit) {
     extensions.getByName<BaseExtension>("android").apply {
         (extensions.findByName("java") as? JavaPluginExtension)?.apply {
+            // Use Java 17 toolchain even if a higher JDK runs the build.
+            // We still use Java 8 for now which higher JDKs have deprecated.
             toolchain {
                 languageVersion.set(JavaLanguageVersion.of(17))
             }
@@ -44,7 +48,10 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
-        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "YOUR_GITHUB_USERNAME/DaddyLive-Cloudstream")
+        // when running through gitHub workflow, GITHUB_REPOSITORY should contain current repository name
+        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "Lumusi/DaddyLive-Cloudstream")
+
+        authors = listOf("d4d")
     }
 
     android {
@@ -76,25 +83,39 @@ subprojects {
         }
     }
 
-    val cloudstream by configurations
-    val implementation by configurations
 
-    cloudstream("com.lagradost:cloudstream3:pre-release")
+    dependencies {
+        val cloudstream by configurations
+        val implementation by configurations
 
-    implementation(kotlin("stdlib"))
-    implementation("com.github.Blatzar:NiceHttp:0.4.13")
-    implementation("org.jsoup:jsoup:1.22.1")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.5")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.13.5")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-    implementation("org.mozilla:rhino:1.9.0")
-    implementation("me.xdrop:fuzzywuzzy:1.4.0")
-    implementation("com.google.code.gson:gson:2.13.2")
-    implementation("app.cash.quickjs:quickjs-android:0.9.2")
-    implementation("com.github.vidstige:jadb:1.2.1")
+        // Stubs for all Cloudstream classes
+        cloudstream("com.lagradost:cloudstream3:pre-release")
+
+        // these dependencies can include any of those which are added by the app,
+        // but you don't need to include any of them if you don't need them
+        // https://github.com/recloudstream/cloudstream/blob/master/app/build.gradle
+        implementation(kotlin("stdlib"))
+        implementation("com.github.Blatzar:NiceHttp:0.4.13")
+        implementation("org.jsoup:jsoup:1.22.1")
+        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.5")
+        implementation("com.fasterxml.jackson.core:jackson-databind:2.13.5")
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+        implementation("org.mozilla:rhino:1.9.0")
+        implementation("me.xdrop:fuzzywuzzy:1.4.0")
+        implementation("com.google.code.gson:gson:2.13.2")
+        implementation("app.cash.quickjs:quickjs-android:0.9.2")
+        implementation("com.github.vidstige:jadb:1.2.1")
+    }
 }
+
 
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
+}
+tasks.register("derle") {
+    group = "help"
+    doLast {
+        println("Filtreleme modu aktif: status=0 olan eklentiler derleme disinda birakildi.")
+    }
 }
