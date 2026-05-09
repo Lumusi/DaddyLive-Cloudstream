@@ -64,7 +64,7 @@ jobs:
           echo '  "description": "Live sports streaming extensions (DaddyLive, SportsBite)",' >> repo.json
           echo '  "manifestVersion": 1,' >> repo.json
           echo '  "pluginLists": [' >> repo.json
-          echo '    "https://raw.githubusercontent.com/Lumusi/SportCDN-Cloudstream/builds/plugins.json"' >> repo.json
+          echo '    "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/plugins.json"' >> repo.json
           echo '  ]' >> repo.json
           echo '}' >> repo.json
           cp repo.json $GITHUB_WORKSPACE/src/repo.json
