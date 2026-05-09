@@ -43,6 +43,8 @@ fun Project.android(configuration: LibraryExtension.() -> Unit) {
 }
 
 subprojects {
+    if (project.path == ":extensions") return@subprojects
+
     apply(plugin = "com.android.library")
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
