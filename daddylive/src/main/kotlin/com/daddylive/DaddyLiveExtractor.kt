@@ -125,7 +125,7 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
                                 // Capture HLS manifest URLs
                                 if (reqUrl.endsWith(".m3u8") && !captured.get()) {
                                     if (captured.compareAndSet(false, true)) {
-                                        cont.resume(reqUrl)
+                                        cont.resume(reqUrl, onCancellation = null)
                                         Handler(Looper.getMainLooper()).postDelayed({
                                             try { destroy() } catch (_: Exception) {}
                                         }, 500)
@@ -141,14 +141,14 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
                     // Timeout after 15 seconds
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
-                            cont.resume(null)
+                            cont.resume(null, onCancellation = null)
                             try { webView.destroy() } catch (_: Exception) {}
                         }
                     }, 15000)
 
                 } catch (e: Exception) {
                     if (captured.compareAndSet(false, true)) {
-                        cont.resume(null)
+                        cont.resume(null, onCancellation = null)
                     }
                 }
 
@@ -163,7 +163,7 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
         }
     }
 
-    private fun processVideoUrl(videoUrl: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun processVideoUrl(videoUrl: String, callback: (ExtractorLink) -> Unit) {
         val qualityLabel = when {
             videoUrl.contains("720") -> "720p"
             videoUrl.contains("1080") -> "1080p"
