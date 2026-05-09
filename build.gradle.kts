@@ -44,7 +44,6 @@ fun Project.android(configuration: BaseExtension.() -> Unit) {
 
 subprojects {
     apply(plugin = "com.android.library")
-    apply(plugin = "kotlin-android")
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
