@@ -20,15 +20,36 @@ class DaddyLive : MainAPI() {
     override val supportedTypes = setOf(TvType.Live)
     override val vpnStatus = VPNStatus.MightBeNeeded
 
+    companion object {
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Accept" to "application/json, text/html, */*; q=0.01",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Referer" to "https://daddylive.org/"
+        )
+        val posterHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Referer" to "https://daddylive.org/"
+        )
+    }
+
     override val mainPage = mainPageOf(
         "${mainUrl}/api/events" to "All Events",
     )
+
+    private fun getPosterUrl(poster: String?, eventId: String?): String? {
+        return when {
+            poster.isNullOrEmpty() -> eventId?.let { "${mainUrl}/api/images/badge/${it}.webp" }
+            poster.startsWith("/") || poster.startsWith("http") -> "${mainUrl}${poster}"
+            else -> poster
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val mapper = jacksonObjectMapper().registerKotlinModule()
 
         val textdoc = withContext(Dispatchers.IO) {
-            app.get(request.data).text
+            app.get(request.data, headers = headers).text
         }
 
         val events: List<DayEvents> = mapper.readValue(textdoc)
@@ -45,14 +66,13 @@ class DaddyLive : MainAPI() {
                     val firstChannel = event.channels?.firstOrNull()
                     val source = event.source ?: "tv"
 
-                    // Build embed URL from channel_id
                     val channelId = firstChannel?.channel_id ?: continue
-                    val encodedId = java.net.URLEncoder.encode(channelId, "UTF-8")
-                    val href = "${mainUrl}/embed/embed.php?id=${encodedId}&player=1&source=${source}"
+                    val href = "${mainUrl}/embed/embed.php?id=${channelId}&player=1&source=${source}"
 
                     dayItems.add(
                         newLiveSearchResponse(title, href, TvType.Live) {
-                            this.posterUrl = null
+                            this.posterUrl = getPosterUrl(event.poster, event.id)
+                            this.posterHeaders = posterHeaders
                         }
                     )
                 }
@@ -75,7 +95,7 @@ class DaddyLive : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val mapper = jacksonObjectMapper().registerKotlinModule()
         val textdoc = withContext(Dispatchers.IO) {
-            app.get("${mainUrl}/api/events").text
+            app.get("${mainUrl}/api/events", headers = headers).text
         }
 
         val events: List<DayEvents> = mapper.readValue(textdoc)
@@ -92,12 +112,12 @@ class DaddyLive : MainAPI() {
                     val firstChannel = event.channels?.firstOrNull()
                     val source = event.source ?: "tv"
                     val channelId = firstChannel?.channel_id ?: continue
-                    val encodedId = java.net.URLEncoder.encode(channelId, "UTF-8")
-                    val href = "${mainUrl}/embed/embed.php?id=${encodedId}&player=1&source=${source}"
+                    val href = "${mainUrl}/embed/embed.php?id=${channelId}&player=1&source=${source}"
 
                     results.add(
                         newLiveSearchResponse(title, href, TvType.Live) {
-                            this.posterUrl = null
+                            this.posterUrl = getPosterUrl(event.poster, event.id)
+                            this.posterHeaders = posterHeaders
                         }
                     )
                 }
@@ -112,20 +132,17 @@ class DaddyLive : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        // Extract channel_id and source from the embed URL
-        // URL format: ...embed.php?id=CHANNEL_ID&player=1&source=SOURCE
         val idParam = url.substringAfter("id=", "").substringBefore("&")
         val sourceParam = url.substringAfter("source=", "").substringBefore("&")
         if (idParam.isEmpty()) return null
 
         val mapper = jacksonObjectMapper().registerKotlinModule()
         val textdoc = withContext(Dispatchers.IO) {
-            app.get("${mainUrl}/api/events").text
+            app.get("${mainUrl}/api/events", headers = headers).text
         }
 
         val events: List<DayEvents> = mapper.readValue(textdoc)
 
-        // Find the matching event by searching all channels
         for (dayData in events) {
             for ((_, eventList) in dayData.categories ?: emptyMap()) {
                 for (event in eventList) {
@@ -139,6 +156,8 @@ class DaddyLive : MainAPI() {
                     val description = event.time?.let { "Scheduled: $it" } ?: ""
 
                     return newMovieLoadResponse(fullTitle, url, TvType.Live, url) {
+                        this.posterUrl = getPosterUrl(event.poster, event.id)
+                        this.posterHeaders = posterHeaders
                         this.plot = description
                         this.tags = listOfNotNull(event.source)
                     }
@@ -155,8 +174,6 @@ class DaddyLive : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        // The data URL is the embed URL, which renders an iframe that contains the actual player
-        // We pass it to the WebView extractor to resolve the actual m3u8 stream
         loadExtractor(
             url = data,
             referer = "$mainUrl/",
