@@ -114,11 +114,18 @@ class SportsBite : MainAPI() {
             for ((groupName, channelList) in channelGroups) {
                 val dayItems = mutableListOf<LiveSearchResponse>()
                 for (ch in channelList) {
-                    val streamUrl = ch.stream_url ?: ch.iframe_url ?: continue
+                    // Prefer iframe URL (WebView extraction is more reliable than double-proxy)
+                    val primaryUrl = ch.iframe_url?.takeIf { it.isNotBlank() } ?: ch.stream_url
+                    val streamUrl = primaryUrl ?: continue
+                    val isIframe = ch.iframe_url?.takeIf { it.isNotBlank() } != null
                     dayItems.add(
                         newLiveSearchResponse(ch.name ?: "Unknown", streamUrl, TvType.Live) {
                             this.posterUrl = ch.image
                             this.posterHeaders = posterHeaders
+                            if (isIframe) {
+                                // Store stream_url as backup data for loadLinks fallback
+                                this.data = ch.stream_url ?: ""
+                            }
                         }
                     )
                 }
@@ -192,12 +199,17 @@ class SportsBite : MainAPI() {
             for (ch in channels) {
                 val name = ch.name ?: continue
                 if (!name.lowercase().contains(q)) continue
-                val streamUrl = ch.stream_url ?: ch.iframe_url ?: continue
+                val primaryUrl = ch.iframe_url?.takeIf { it.isNotBlank() } ?: ch.stream_url
+                val streamUrl = primaryUrl ?: continue
+                val isIframe = ch.iframe_url?.takeIf { it.isNotBlank() } != null
 
                 results.add(
                     newLiveSearchResponse(name, streamUrl, TvType.Live) {
                         this.posterUrl = ch.image
                         this.posterHeaders = posterHeaders
+                        if (isIframe && !ch.stream_url.isNullOrBlank()) {
+                            this.data = ch.stream_url
+                        }
                     }
                 )
             }
