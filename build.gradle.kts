@@ -14,7 +14,7 @@ buildscript {
         classpath("com.android.tools.build:gradle:8.13.2")
         // Cloudstream gradle plugin which makes everything work and builds plugins
         classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.0")
     }
 }
 
@@ -100,7 +100,7 @@ subprojects {
         implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.5")
         implementation("com.fasterxml.jackson.core:jackson-databind:2.13.5")
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
         implementation("org.mozilla:rhino:1.9.0")
         implementation("me.xdrop:fuzzywuzzy:1.4.0")
         implementation("com.google.code.gson:gson:2.13.2")

@@ -11,7 +11,6 @@ import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**

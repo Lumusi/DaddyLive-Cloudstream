@@ -39,7 +39,8 @@ class DaddyLive : MainAPI() {
     private fun getPosterUrl(poster: String?, eventId: String?): String? {
         return when {
             poster.isNullOrEmpty() -> eventId?.let { "${mainUrl}/api/images/badge/${it}.webp" }
-            poster.startsWith("/") || poster.startsWith("http") -> "${mainUrl}${poster}"
+            poster.startsWith("http") -> poster
+            poster.startsWith("/") -> "${mainUrl}${poster}"
             else -> poster
         }
     }
