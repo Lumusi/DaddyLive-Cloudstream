@@ -48,13 +48,13 @@ subprojects {
 
     cloudstream {
         // when running through gitHub workflow, GITHUB_REPOSITORY should contain current repository name
-        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "Lumusi/DaddyLive-Cloudstream")
+        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "Lumusi/SportCDN-Cloudstream")
 
         authors = listOf("d4d")
     }
 
     android {
-        namespace = "com.daddylive"
+        namespace = "com.sportcdn"
 
         defaultConfig {
             minSdk = 21

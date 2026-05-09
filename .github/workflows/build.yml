@@ -51,7 +51,7 @@ jobs:
           chmod +x gradlew
           ./gradlew make makePluginsJson
           shopt -s globstar nullglob
-          for f in **/build/*.cs3; do
+          for f in extensions/**/build/*.cs3; do
             [ -e "$f" ] && cp "$f" $GITHUB_WORKSPACE/builds
           done
           cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins.json
@@ -59,12 +59,12 @@ jobs:
       - name: Write repo.json to source
         run: |
           echo '{' > repo.json
-          echo '  "iconUrl": "https://daddylive.org/wp-content/uploads/2024/01/cropped-icon.png",' >> repo.json
-          echo '  "name": "daddylive",' >> repo.json
-          echo '  "description": "Watch live sports streams from daddylive.org",' >> repo.json
+          echo '  "iconUrl": "https://livetv.moviebite.cc/wp-content/uploads/2024/01/cropped-icon.png",' >> repo.json
+          echo '  "name": "SportCDN",' >> repo.json
+          echo '  "description": "Live sports streaming extensions (DaddyLive, SportsBite)",' >> repo.json
           echo '  "manifestVersion": 1,' >> repo.json
           echo '  "pluginLists": [' >> repo.json
-          echo '    "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/plugins.json"' >> repo.json
+          echo '    "https://raw.githubusercontent.com/Lumusi/SportCDN-Cloudstream/builds/plugins.json"' >> repo.json
           echo '  ]' >> repo.json
           echo '}' >> repo.json
           cp repo.json $GITHUB_WORKSPACE/src/repo.json
@@ -76,7 +76,7 @@ jobs:
           echo "=== .cs3 files ==="
           ls -la $GITHUB_WORKSPACE/builds/*.cs3 || { echo "ERROR: No .cs3 files found"; exit 1; }
           echo "=== repo.json ==="
-          cat $GITHUB_WORKSPACE/src/repo.json
+          cat repo.json
 
       - name: Push builds branch
         run: |
