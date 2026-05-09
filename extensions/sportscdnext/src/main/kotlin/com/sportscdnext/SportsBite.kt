@@ -234,9 +234,7 @@ class SportsBite : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         // Handle SportsBite proxy URLs directly (no WebView needed)
-        if (data.contains("store.sportsbite.online/api/proxy/hls") ||
-            data.contains("edge.cdnlivetv.ru") && data.contains(".m3u8")
-        ) {
+        if (data.contains("store.sportsbite.online/api/proxy/hls")) {
             callback.invoke(
                 newExtractorLink(
                     source = name,
@@ -249,14 +247,34 @@ class SportsBite : MainAPI() {
                     this.headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                         "Referer" to "$mainUrl/",
-                        "Origin" to "https://store.sportsbite.online"
+                        "Origin" to "$mainUrl/"
                     )
                 }
             )
             return@withContext true
         }
 
-        // Fallback: use WebView extractor for iframe-based streams
+        // Handle direct m3u8 links (admin links, cdnlivetv edge URLs) without WebView
+        if (data.endsWith(".m3u8", ignoreCase = true)) {
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "Direct HLS",
+                    url = data,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.quality = Qualities.Unknown.value
+                    this.referer = "$mainUrl/"
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Origin" to "$mainUrl/"
+                    )
+                }
+            )
+            return@withContext true
+        }
+
+        // Fallback: use WebView extractor for iframe-based streams (wikisport.club, dlhd.link)
         try {
             loadExtractor(
                 url = data,
@@ -265,24 +283,7 @@ class SportsBite : MainAPI() {
                 callback = callback
             )
         } catch (e: Exception) {
-            // Last resort: try direct m3u8 extraction
-            if (data.endsWith(".m3u8", ignoreCase = true)) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = "Direct HLS",
-                        url = data,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.quality = Qualities.Unknown.value
-                        this.referer = "$mainUrl/"
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Origin" to mainUrl
-                        )
-                    }
-                )
-            }
+            // noop — WebView extractor handles its own fallbacks internally
         }
 
         true
