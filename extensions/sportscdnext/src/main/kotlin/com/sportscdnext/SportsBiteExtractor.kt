@@ -31,14 +31,17 @@ open class SportsBiteExtractor(context: Context) : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
+            // Normalize http:// iframe URLs to https for WebView loading
+            val normalizedUrl = url.replaceFirst("http://", "https://")
+
             // Use WebView for iframe-based streams (wikisport.club, dlhd.link, etc.)
             val videoUrl = withContext(Dispatchers.Main) {
-                getVideoUrlWithWebView(appContext, url)
+                getVideoUrlWithWebView(appContext, normalizedUrl)
             }
             if (videoUrl != null) {
                 processVideoUrl(videoUrl, callback)
             } else {
-                // Fallback: if URL itself is an m3u8, use it directly
+                // Fallback: if WebView didn't find m3u8, try the URL directly
                 tryExtractDirectUrl(url, subtitleCallback, callback)
             }
         } catch (e: Exception) {
@@ -63,7 +66,8 @@ open class SportsBiteExtractor(context: Context) : ExtractorApi() {
                     this.referer = "$mainUrl/"
                     this.headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Origin" to mainUrl
+                        "Origin" to mainUrl,
+                        "Referer" to "$mainUrl/"
                     )
                 }
             )
@@ -92,19 +96,26 @@ open class SportsBiteExtractor(context: Context) : ExtractorApi() {
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-
                                 // Auto-click play button after page loads
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     view?.evaluateJavascript(
                                         """
                                         (function() {
                                             try {
+                                                // Try common player button selectors
                                                 var btn = document.querySelector('.jw-icon-display, .jw-display-play-container, .vjs-big-play-button, .fp-playButton, .player-btn, .play-button, [class*="play" i]');
                                                 if (btn) { btn.click(); return 'clicked'; }
                                                 if (typeof jwplayer !== 'undefined' && jwplayer().play) { jwplayer().play(); return 'jwplayer'; }
                                                 if (typeof flowplayer !== 'undefined' && flowplayer().play) { flowplayer().play(); return 'flowplayer'; }
                                                 if (typeof player !== 'undefined' && player.play) { player.play(); return 'player_api'; }
-                                                var playerArea = document.querySelector('.jwplayer, .flowplayer, .video-js, #player, .player-container, iframe');
+                                                // Try to find and click any iframe inside a player container
+                                                var iframe = document.querySelector('.jwplayer iframe, .player-container iframe, .video-container iframe, #player iframe');
+                                                if (iframe) {
+                                                    var clickEvt = new MouseEvent('click', { bubbles: true });
+                                                    iframe.dispatchEvent(clickEvt);
+                                                    return 'iframe_clicked';
+                                                }
+                                                var playerArea = document.querySelector('.jwplayer, .flowplayer, .video-js, #player, .player-container');
                                                 if (playerArea) {
                                                     var clickEvt = new MouseEvent('click', { bubbles: true });
                                                     playerArea.dispatchEvent(clickEvt);
@@ -186,7 +197,8 @@ open class SportsBiteExtractor(context: Context) : ExtractorApi() {
                 this.headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Origin" to mainUrl,
-                    "Connection" to "keep-alive"
+                    "Connection" to "keep-alive",
+                    "Referer" to "$mainUrl/"
                 )
             }
         )

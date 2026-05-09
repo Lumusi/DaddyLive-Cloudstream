@@ -36,12 +36,33 @@ class SportsBite : MainAPI() {
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
             "Referer" to "https://livetv.moviebite.cc/"
         )
+
+        // Cache to avoid re-fetching all 314 channels on every search/main page load
+        @Volatile
+        private var cachedChannels: List<ChannelData>? = null
+        @Volatile
+        private var cacheTimestamp: Long = 0
+        private const val CACHE_TTL_MS: Long = 5 * 60 * 1000L // 5 minutes
+
+        fun isCacheValid(): Boolean {
+            return cachedChannels != null && (System.currentTimeMillis() - cacheTimestamp) < CACHE_TTL_MS
+        }
+
+        fun getCachedChannels(): List<ChannelData>? = cachedChannels
+
+        fun updateCache(channels: List<ChannelData>) {
+            cachedChannels = channels
+            cacheTimestamp = System.currentTimeMillis()
+        }
     }
 
     override val mainPage = mainPageOf(
-        "${mainUrl}/api/v1/matches/live" to "🔴 Live Now",
         "${mainUrl}/channels.json?type=sports" to "🏈 Sports",
         "${mainUrl}/channels.json?type=news" to "📰 News",
+        "${mainUrl}/channels.json?type=kids" to "👶 Kids",
+        "${mainUrl}/channels.json?type=fun" to "🎮 Fun",
+        "${mainUrl}/channels.json?type=all" to "📺 All Channels",
+        "${mainUrl}/api/v1/matches/live" to "🔴 Live Now",
         "${mainUrl}/adminlinks.json" to "⚡ Admin Links",
     )
 
@@ -61,6 +82,21 @@ class SportsBite : MainAPI() {
         }
     }
 
+    private suspend fun fetchAllChannels(): List<ChannelData> {
+        // Return cached if valid
+        if (isCacheValid()) {
+            return getCachedChannels()!!
+        }
+
+        val mapper = jacksonObjectMapper().registerKotlinModule()
+        val textdoc = withContext(Dispatchers.IO) {
+            app.get("${mainUrl}/channels.json", headers = headers).text
+        }
+        val channels: List<ChannelData> = mapper.readValue(textdoc)
+        updateCache(channels)
+        return channels
+    }
+
     private suspend fun getLiveMatches(): HomePageResponse {
         val items = mutableListOf<HomePageList>()
         val mapper = jacksonObjectMapper().registerKotlinModule()
@@ -74,7 +110,7 @@ class SportsBite : MainAPI() {
             val liveItems = mutableListOf<LiveSearchResponse>()
             for (match in matches) {
                 val matchId = match.id ?: continue
-                val title = match.title ?: "${match.homeTeam} vs ${match.awayTeam}"
+                val title = match.title ?: "${match.homeTeam ?: "?"} vs ${match.awayTeam ?: "?"}"
 
                 liveItems.add(
                     newLiveSearchResponse(title, "${mainUrl}/match/$matchId", TvType.Live) {
@@ -105,22 +141,39 @@ class SportsBite : MainAPI() {
         val items = mutableListOf<HomePageList>()
 
         try {
-            val textdoc = withContext(Dispatchers.IO) {
-                app.get(url, headers = headers).text
+            // Use cached channels if available (from /channels.json without type filter)
+            var channels = if (url.contains("type=")) {
+                val typeParam = url.substringAfter("type=").substringBefore("&")
+                val allChannels = fetchAllChannels()
+                if (typeParam == "all") allChannels
+                else allChannels.filter { (it.type ?: "").equals(typeParam, ignoreCase = true) }
+            } else {
+                fetchAllChannels()
             }
-            val channels: List<ChannelData> = mapper.readValue(textdoc)
+
+            // Fallback: fetch directly if cache was empty
+            if (channels.isEmpty()) {
+                val textdoc = withContext(Dispatchers.IO) {
+                    app.get(url, headers = headers).text
+                }
+                channels = mapper.readValue(textdoc)
+            }
+
             val channelGroups = channels.groupBy { it.type ?: "other" }
 
             for ((groupName, channelList) in channelGroups) {
                 val dayItems = mutableListOf<LiveSearchResponse>()
                 for (ch in channelList) {
+                    // Skip channels with no stream source at all
+                    if (ch.stream_url.isNullOrBlank() && ch.iframe_url.isNullOrBlank()) continue
+
                     // Prefer iframe URL (WebView extraction is more reliable than double-proxy)
                     val primaryUrl = ch.iframe_url?.takeIf { it.isNotBlank() } ?: ch.stream_url
                     val streamUrl = primaryUrl ?: continue
-                    val isIframe = ch.iframe_url?.takeIf { it.isNotBlank() } != null
+
                     dayItems.add(
                         newLiveSearchResponse(ch.name ?: "Unknown", streamUrl, TvType.Live) {
-                            this.posterUrl = ch.image
+                            this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
                             this.posterHeaders = posterHeaders
                         }
                     )
@@ -155,7 +208,7 @@ class SportsBite : MainAPI() {
 
             val dayItems = mutableListOf<LiveSearchResponse>()
             for (link in links) {
-                val hlsUrl = link.hls1 ?: continue
+                val hlsUrl = link.hls1 ?: link.hls2 ?: continue
                 val title = link.name?.ifEmpty { null } ?: "Live Stream"
 
                 dayItems.add(
@@ -186,22 +239,23 @@ class SportsBite : MainAPI() {
         val results = mutableListOf<SearchResponse>()
 
         try {
-            val mapper = jacksonObjectMapper().registerKotlinModule()
-            val textdoc = withContext(Dispatchers.IO) {
-                app.get("${mainUrl}/channels.json", headers = headers).text
+            // Use cached channels if valid to avoid hitting the API on every keystroke
+            val channels = if (isCacheValid()) {
+                getCachedChannels()!!
+            } else {
+                fetchAllChannels()
+            }.filter { ch ->
+                val name = ch.name ?: return@filter false
+                name.lowercase().contains(q)
             }
-            val channels: List<ChannelData> = mapper.readValue(textdoc)
 
             for (ch in channels) {
-                val name = ch.name ?: continue
-                if (!name.lowercase().contains(q)) continue
                 val primaryUrl = ch.iframe_url?.takeIf { it.isNotBlank() } ?: ch.stream_url
                 val streamUrl = primaryUrl ?: continue
-                val isIframe = ch.iframe_url?.takeIf { it.isNotBlank() } != null
 
                 results.add(
-                    newLiveSearchResponse(name, streamUrl, TvType.Live) {
-                        this.posterUrl = ch.image
+                    newLiveSearchResponse(ch.name ?: "Unknown", streamUrl, TvType.Live) {
+                        this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
                         this.posterHeaders = posterHeaders
                     }
                 )
@@ -238,8 +292,11 @@ class SportsBite : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        // Handle SportsBite proxy URLs directly (no WebView needed)
-        if (data.contains("store.sportsbite.online/api/proxy/hls")) {
+        var handled = false
+
+        // 1. Handle SportsBite proxy URLs directly (store.sportsbite.online)
+        if (data.contains("store.sportsbite.online/api/proxy/hls") ||
+            data.contains("store.sportsbite.online/proxy/hls")) {
             callback.invoke(
                 newExtractorLink(
                     source = name,
@@ -256,11 +313,11 @@ class SportsBite : MainAPI() {
                     )
                 }
             )
-            return@withContext true
+            handled = true
         }
 
-        // Handle direct m3u8 links (admin links, cdnlivetv edge URLs) without WebView
-        if (data.endsWith(".m3u8", ignoreCase = true)) {
+        // 2. Handle direct m3u8 links (admin links, cdnlivetv edge URLs, cloudfront, wurl, amagi, etc.)
+        if (!handled && data.endsWith(".m3u8", ignoreCase = true)) {
             callback.invoke(
                 newExtractorLink(
                     source = name,
@@ -272,26 +329,30 @@ class SportsBite : MainAPI() {
                     this.referer = "$mainUrl/"
                     this.headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Origin" to "$mainUrl/"
+                        "Origin" to "$mainUrl/",
+                        "Referer" to "$mainUrl/"
                     )
                 }
             )
-            return@withContext true
+            handled = true
         }
 
-        // Fallback: use WebView extractor for iframe-based streams (wikisport.club, dlhd.link)
-        try {
-            loadExtractor(
-                url = data,
-                referer = "$mainUrl/",
-                subtitleCallback = subtitleCallback,
-                callback = callback
-            )
-        } catch (e: Exception) {
-            // noop — WebView extractor handles its own fallbacks internally
+        // 3. Handle iframe URLs from wikisport.club / dlhd.link -- feed to WebView extractor
+        if (!handled) {
+            try {
+                loadExtractor(
+                    url = data,
+                    referer = "$mainUrl/",
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+            } catch (e: Exception) {
+                // Extractor handles its own fallbacks
+            }
+            handled = true
         }
 
-        true
+        handled
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -316,6 +377,7 @@ class SportsBite : MainAPI() {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class AdminLink(
+        @JsonProperty("id") val id: String?,
         @JsonProperty("name") val name: String?,
         @JsonProperty("hls1") val hls1: String?,
         @JsonProperty("hls2") val hls2: String?,
