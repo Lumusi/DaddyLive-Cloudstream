@@ -1,9 +1,9 @@
 {
-  "iconUrl": "https://daddylive.org/wp-content/uploads/2024/01/cropped-icon.png",
-  "name": "daddylive",
-  "description": "Watch live sports streams from daddylive.org",
+  "iconUrl": "https://livetv.moviebite.cc/wp-content/uploads/2024/01/cropped-icon.png",
+  "name": "SportCDN",
+  "description": "Live sports streaming extensions (DaddyLive, SportsBite)",
   "manifestVersion": 1,
   "pluginLists": [
-    "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/plugins.json"
+    "https://raw.githubusercontent.com/Lumusi/SportCDN-Cloudstream/builds/plugins.json"
   ]
 }
