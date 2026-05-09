@@ -1,4 +1,3 @@
-// ! Bu araç @D4dDaddyLive için yazılmıştır.
 version = 25
 
 cloudstream {
