@@ -55,12 +55,12 @@ jobs:
           for f in **/build/*.cs3; do
             [ -e "$f" ] && cp "$f" $GITHUB_WORKSPACE/builds
           done
-          cp build/plugins.json $GITHUB_WORKSPACE/builds
+          cp build/plugins.json $GITHUB_WORKSPACE/builds/repo.json
 
       - name: Verify build artifacts
         run: |
-          echo "=== plugins.json ==="
-          cat $GITHUB_WORKSPACE/builds/plugins.json
+          echo "=== repo.json ==="
+          cat $GITHUB_WORKSPACE/builds/repo.json
           echo "=== .cs3 files ==="
           ls -la $GITHUB_WORKSPACE/builds/*.cs3 2>/dev/null || (echo "ERROR: No .cs3 files found" && exit 1)
 
