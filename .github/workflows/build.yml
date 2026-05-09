@@ -54,6 +54,13 @@ jobs:
           done
           cp build/plugins.json $GITHUB_WORKSPACE/builds
 
+      - name: Verify build artifacts
+        run: |
+          echo "=== plugins.json ==="
+          cat $GITHUB_WORKSPACE/builds/plugins.json
+          echo "=== .cs3 files ==="
+          ls -la $GITHUB_WORKSPACE/builds/*.cs3 2>/dev/null || (echo "ERROR: No .cs3 files found" && exit 1)
+
       - name: Push builds
         run: |
           cd $GITHUB_WORKSPACE/builds
