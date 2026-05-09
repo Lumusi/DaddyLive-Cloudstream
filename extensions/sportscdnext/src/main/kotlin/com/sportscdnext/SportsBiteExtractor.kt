@@ -15,9 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Extractor for SportsBite (livetv.moviebite.cc).
- * Handles two types of stream sources:
- * 1. Direct HLS proxy URLs from store.sportsbite.online (resolved immediately)
- * 2. iframe embeds from wikisport.club / dlhd.link (require WebView)
+ * Handles iframe-based streams from wikisport.club / dlhd.link via WebView.
+ * Direct proxy URLs (store.sportsbite.online) are handled in SportsBite.loadLinks() directly.
  */
 open class SportsBiteExtractor(context: Context) : ExtractorApi() {
     override val name = "SportsBite"
@@ -32,77 +31,19 @@ open class SportsBiteExtractor(context: Context) : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            // First, check if this is a direct HLS proxy URL (no WebView needed)
-            if (handleDirectProxyUrl(url, callback)) {
-                return
-            }
-
-            // Otherwise, use WebView for iframe-based streams
+            // Use WebView for iframe-based streams (wikisport.club, dlhd.link, etc.)
             val videoUrl = withContext(Dispatchers.Main) {
                 getVideoUrlWithWebView(appContext, url)
             }
             if (videoUrl != null) {
                 processVideoUrl(videoUrl, callback)
             } else {
+                // Fallback: if URL itself is an m3u8, use it directly
                 tryExtractDirectUrl(url, subtitleCallback, callback)
             }
         } catch (e: Exception) {
             tryExtractDirectUrl(url, subtitleCallback, callback)
         }
-    }
-
-    /**
-     * Handle SportsBite's proxy URLs directly.
-     * Format: https://store.sportsbite.online/api/proxy/hls?url=<encoded_m3u8>
-     * These are already HLS streams, no extraction needed.
-     */
-    private fun handleDirectProxyUrl(
-        url: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        if (url.contains("store.sportsbite.online/api/proxy/hls")) {
-            // The proxy URL already serves HLS directly
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "SportsBite HD",
-                    url = url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.quality = Qualities.Unknown.value
-                    this.referer = "$mainUrl/"
-                    // The proxy requires browser-like headers
-                    this.headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Referer" to "$mainUrl/",
-                        "Origin" to "https://store.sportsbite.online"
-                    )
-                }
-            )
-            return true
-        }
-
-        // Also handle direct m3u8 URLs that might be embedded in the proxy's target
-        if (url.contains("edge.cdnlivetv.ru") && url.contains(".m3u8")) {
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "SportsBite Direct",
-                    url = url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.quality = Qualities.Unknown.value
-                    this.referer = "$mainUrl/"
-                    this.headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Origin" to mainUrl
-                    )
-                }
-            )
-            return true
-        }
-
-        return false
     }
 
     private suspend fun tryExtractDirectUrl(

@@ -75,14 +75,11 @@ class SportsBite : MainAPI() {
             for (match in matches) {
                 val matchId = match.id ?: continue
                 val title = match.title ?: "${match.homeTeam} vs ${match.awayTeam}"
-                val sport = match.sportType ?: "live"
 
                 liveItems.add(
                     newLiveSearchResponse(title, "${mainUrl}/match/$matchId", TvType.Live) {
                         this.posterUrl = match.image
                         this.posterHeaders = posterHeaders
-                        this.tags = listOfNotNull(sport)
-                        this.description = match.time
                     }
                 )
             }
@@ -122,7 +119,6 @@ class SportsBite : MainAPI() {
                         newLiveSearchResponse(ch.name ?: "Unknown", streamUrl, TvType.Live) {
                             this.posterUrl = ch.image
                             this.posterHeaders = posterHeaders
-                            this.tags = listOfNotNull(ch.type)
                         }
                     )
                 }
@@ -202,7 +198,6 @@ class SportsBite : MainAPI() {
                     newLiveSearchResponse(name, streamUrl, TvType.Live) {
                         this.posterUrl = ch.image
                         this.posterHeaders = posterHeaders
-                        this.tags = listOfNotNull(ch.type)
                     }
                 )
             }
@@ -238,12 +233,58 @@ class SportsBite : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        loadExtractor(
-            url = data,
-            referer = "$mainUrl/",
-            subtitleCallback = subtitleCallback,
-            callback = callback
-        )
+        // Handle SportsBite proxy URLs directly (no WebView needed)
+        if (data.contains("store.sportsbite.online/api/proxy/hls") ||
+            data.contains("edge.cdnlivetv.ru") && data.contains(".m3u8")
+        ) {
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "SportsBite HD",
+                    url = data,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.quality = Qualities.Unknown.value
+                    this.referer = "$mainUrl/"
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer" to "$mainUrl/",
+                        "Origin" to "https://store.sportsbite.online"
+                    )
+                }
+            )
+            return@withContext true
+        }
+
+        // Fallback: use WebView extractor for iframe-based streams
+        try {
+            loadExtractor(
+                url = data,
+                referer = "$mainUrl/",
+                subtitleCallback = subtitleCallback,
+                callback = callback
+            )
+        } catch (e: Exception) {
+            // Last resort: try direct m3u8 extraction
+            if (data.endsWith(".m3u8", ignoreCase = true)) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = "Direct HLS",
+                        url = data,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.quality = Qualities.Unknown.value
+                        this.referer = "$mainUrl/"
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            "Origin" to mainUrl
+                        )
+                    }
+                )
+            }
+        }
+
         true
     }
 
