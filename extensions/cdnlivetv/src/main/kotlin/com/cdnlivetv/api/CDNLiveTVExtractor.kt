@@ -14,9 +14,17 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Extractor for CDNLiveTV (cdnlivetv.tv).
- * The player page uses OPlayer which loads HLS streams via obfuscated JS.
- * We use WebView to intercept the .m3u8 manifest URL during player initialization.
+ * WebView-based extractor for CDNLiveTV (cdnlivetv.tv).
+ *
+ * The player domain (cdnlivetv.tv) is Cloudflare-protected and returns 401 for direct HTTP.
+ * The only reliable way to extract the HLS stream is by rendering the page in a WebView,
+ * triggering OPlayer playback, and intercepting the resulting .m3u8 network request.
+ *
+ * Architecture:
+ * 1. Player page loaded in headless WebView: cdnlivetv.tv/api/v1/channels/player/?name=...&code=...
+ * 2. OPlayer (from cdn.jsdelivr.net/npm/@oplayer/hls) initializes and fetches the HLS manifest
+ * 3. shouldInterceptRequest captures the first .m3u8 URL
+ * 4. URL is passed to the player as an ExtractorLink
  */
 open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
     override val name = "CDNLiveTV"
@@ -24,76 +32,77 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
     override val requiresReferer = true
     private val appContext = context.applicationContext
 
+    companion object {
+        val refererHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Referer" to "https://streamchannels99.ru/"
+        )
+        val jsonHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Accept" to "application/json, text/html, */*; q=0.01",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Referer" to "https://streamsports99.ru/"
+        )
+    }
+
+    /**
+     * Primary extraction: WebView-first approach.
+     * The player page requires browser rendering (Cloudflare + OPlayer JS).
+     * HTTP-only approaches return 401 due to Cloudflare challenge.
+     */
     override suspend fun getUrl(
         url: String,
         referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        // Primary: WebView extraction (handles Cloudflare + OPlayer)
         try {
-            // Channel API URLs from api.cdnlivetv.ru return .ru domain,
-            // but the player page is on cdnlivetv.tv
-            val playerUrl = when {
-                url.startsWith("http") && !url.contains("cdnlivetv.tv") -> {
-                    // Convert API URL to player URL if needed
-                    // Extract channel name from the original URL the extension provided
-                    url
-                }
-                else -> url
-            }
-
-            // Normalize http to https
-            val normalizedUrl = playerUrl.replaceFirst("http://", "https://")
-
+            val normalizedUrl = url.replaceFirst("http://", "https://")
             val videoUrl = withContext(Dispatchers.Main) {
                 getVideoUrlWithWebView(appContext, normalizedUrl)
             }
-
             if (videoUrl != null) {
                 processVideoUrl(videoUrl, callback)
-            } else {
-                tryExtractDirectUrl(url, subtitleCallback, callback)
+                return
             }
         } catch (e: Exception) {
-            tryExtractDirectUrl(url, subtitleCallback, callback)
+            // Fall through to fallback
         }
+
+        // Fallback: Try direct .m3u8 (in case URL itself is a stream link)
+        tryExtractDirectUrl(url, callback)
     }
 
+    /**
+     * If the URL itself is already an .m3u8 link, return it directly.
+     */
     private suspend fun tryExtractDirectUrl(
         url: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Handle direct m3u8 URLs from CDN edge or fallback sources
-        val m3u8Url = when {
-            url.endsWith(".m3u8", ignoreCase = true) -> url
-            url.contains(".m3u8", ignoreCase = true) -> {
-                // Extract the full m3u8 URL from query params or fragments
-                url
-            }
-            else -> null
-        }
-
-        if (m3u8Url != null) {
+        if (url.endsWith(".m3u8", ignoreCase = true) || url.endsWith(".ms3", ignoreCase = true)) {
             callback.invoke(
                 newExtractorLink(
                     source = name,
                     name = "Direct HLS",
-                    url = m3u8Url,
+                    url = url,
                     type = ExtractorLinkType.M3U8
                 ) {
                     this.quality = Qualities.Unknown.value
                     this.referer = "$mainUrl/"
-                    this.headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
-                        "Origin" to mainUrl,
-                        "Referer" to "$mainUrl/"
-                    )
+                    this.headers = refererHeaders
                 }
             )
         }
     }
 
+    /**
+     * Launches a headless WebView to render the OPlayer page and capture
+     * the .m3u8 stream URL from network requests.
+     */
     private suspend fun getVideoUrlWithWebView(context: Context, url: String): String? {
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<String?> { cont ->
@@ -108,39 +117,49 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                         settings.mediaPlaybackRequiresUserGesture = false
                         settings.userAgentString =
                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0"
+                        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
                         settings.setSupportZoom(false)
                         settings.loadWithOverviewMode = true
-                        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+                        settings.blockNetworkImage = false
+                        settings.allowFileAccessFromFileURLs = true
+                        settings.allowUniversalAccessFromFileURLs = true
 
                         webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                super.onPageStarted(view, url, favicon)
-                            }
-
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                // Wait for OPlayer to load and initialize
+
+                                // Wait for OPlayer to load, then attempt to trigger playback
+                                // OPlayer uses either CSS play button or JS API
                                 Handler(Looper.getMainLooper()).postDelayed({
-                                    // Try to trigger playback
                                     view?.evaluateJavascript(
                                         """
                                         (function() {
                                             try {
-                                                // OPlayer - find and click play button
-                                                var playBtn = document.querySelector('.oplayer-btn-play, .oplayer-large-play, [class*="play"], [class*="Play"]');
-                                                if (playBtn) { playBtn.click(); return 'clicked'; }
-                                                // Try calling player API if available
-                                                if (window.player && window.player.play) { window.player.play(); return 'player_api'; }
-                                                if (window.oplayer && window.oplayer.toggle) { window.oplayer.toggle(); return 'oplayer_toggle'; }
-                                                // Try common video element
+                                                // Method 1: Click OPlayer play button (CSS-based)
+                                                var playBtn = document.querySelector('[class*="o-player"] [class*="play"], .o-icon-play, [class*="oplayer"] [class*="btn"]');
+                                                if (playBtn) { playBtn.click(); return 'oplayer_clicked'; }
+
+                                                // Method 2: Try standard player APIs
+                                                if (window.player && typeof window.player.play === 'function') {
+                                                    window.player.play();
+                                                    return 'player_api';
+                                                }
+
+                                                // Method 3: Generic video element play
                                                 var video = document.querySelector('video');
-                                                if (video && video.src) { return video.src; }
-                                                return 'no_action';
-                                            } catch(e) { return 'error: ' + e.message; }
+                                                if (video) {
+                                                    video.play();
+                                                    return 'video_play';
+                                                }
+
+                                                return 'no_player_found';
+                                            } catch(e) {
+                                                return 'error: ' + e.message;
+                                            }
                                         })();
                                         """.trimIndent()
                                     ) { _ -> }
-                                }, 2000)
+                                }, 2500) // Wait 2.5s for OPlayer to fully initialize
                             }
 
                             @Suppress("DEPRECATION")
@@ -150,7 +169,12 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                             ): android.webkit.WebResourceResponse? {
                                 val reqUrl = request?.url?.toString() ?: return null
 
-                                if (!captured.get() && (reqUrl.endsWith(".m3u8") || reqUrl.endsWith(".mpd", ignoreCase = true))) {
+                                // Capture HLS manifest URLs
+                                if (!captured.get() && (
+                                    reqUrl.endsWith(".m3u8", ignoreCase = true) ||
+                                    reqUrl.endsWith(".ms3", ignoreCase = true) ||
+                                    (reqUrl.contains("/secure/api/v1/") && reqUrl.contains("playlist"))
+                                )) {
                                     if (captured.compareAndSet(false, true)) {
                                         cont.resume(reqUrl, onCancellation = null)
                                         Handler(Looper.getMainLooper()).postDelayed({
@@ -160,12 +184,21 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
+
+                            override fun onReceivedError(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                                error: android.webkit.WebResourceError?
+                            ) {
+                                super.onReceivedError(view, request, error)
+                                // Don't fail on sub-resource errors
+                            }
                         }
                     }
 
                     webView.loadUrl(url)
 
-                    // Timeout after 20 seconds
+                    // Timeout after 20 seconds (Cloudflare may add delay)
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
                             cont.resume(null, onCancellation = null)
@@ -182,7 +215,7 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                 cont.invokeOnCancellation {
                     if (captured.compareAndSet(false, true)) {
                         Handler(Looper.getMainLooper()).post {
-                            try { /* cleanup handled */ } catch (_: Exception) {}
+                            try { /* webView cleanup handled above */ } catch (_: Exception) {}
                         }
                     }
                 }
@@ -190,6 +223,9 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
         }
     }
 
+    /**
+     * Wrap the captured HLS URL into an ExtractorLink for the player.
+     */
     private suspend fun processVideoUrl(videoUrl: String, callback: (ExtractorLink) -> Unit) {
         val qualityLabel = when {
             videoUrl.contains("720") -> "720p"
@@ -210,8 +246,7 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                 this.referer = "$mainUrl/"
                 this.headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
-                    "Origin" to mainUrl,
-                    "Connection" to "keep-alive",
+                    "Origin" to "https://cdnlivetv.tv",
                     "Referer" to "$mainUrl/"
                 )
             }

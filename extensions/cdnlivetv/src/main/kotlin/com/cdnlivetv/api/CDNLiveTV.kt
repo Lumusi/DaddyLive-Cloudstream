@@ -12,9 +12,17 @@ import kotlinx.coroutines.withContext
 
 /**
  * CDNLiveTV (cdnlivetv.tv / api.cdnlivetv.ru) - Live sports streaming provider.
- * JSON API: /api/v1/channels/?user=cdnlivetv&plan=free (762 channels, 38 country codes)
- * Player page: /api/v1/channels/player/?name=...&code=... (OPlayer iframe, needs WebView)
- * Stream delivery: iframe embeds (wikisport.club, dlhd.link, etc.) or direct HLS
+ *
+ * Architecture:
+ * - API domain: api.cdnlivetv.ru (unprotected JSON API, 762 channels, 38 countries)
+ * - Player domain: cdnlivetv.tv (Cloudflare-protected, OPlayer-based)
+ *
+ * Flow:
+ * 1. API (/channels/) provides channel list with metadata (name, code, viewers, image, status)
+ * 2. Player URL constructed: /api/v1/channels/player/?name={NAME}&code={CODE}&user=...
+ * 3. load() enriches metadata from API (title, poster, description)
+ * 4. loadLinks() dispatches the player URL to the WebView extractor
+ * 5. WebView renders OPlayer, captures .m3u8 from network requests
  */
 class CDNLiveTV : MainAPI() {
     override var mainUrl = "https://api.cdnlivetv.ru/api/v1"
@@ -37,62 +45,31 @@ class CDNLiveTV : MainAPI() {
             "Referer" to "https://cdnlivetv.tv/"
         )
 
-        // Cache to avoid re-fetching all 762 channels on every action
-        private const val CACHE_TTL_MS = 5 * 60 * 1000L // 5 minutes
-        @Volatile
-        private var cachedChannels: List<ChannelData>? = null
-        @Volatile
-        private var cacheTimestamp: Long = 0
+        private const val CACHE_TTL_MS = 5 * 60 * 1000L
+        @Volatile private var cachedChannels: List<ChannelData>? = null
+        @Volatile private var cacheTimestamp: Long = 0
 
-        fun isCacheValid(): Boolean {
-            return cachedChannels != null && (System.currentTimeMillis() - cacheTimestamp) < CACHE_TTL_MS
-        }
-
+        fun isCacheValid() = cachedChannels != null && (System.currentTimeMillis() - cacheTimestamp) < CACHE_TTL_MS
         fun getCachedChannels(): List<ChannelData>? = cachedChannels
-
         fun updateCache(channels: List<ChannelData>) {
             cachedChannels = channels
             cacheTimestamp = System.currentTimeMillis()
         }
     }
 
-    // Country code -> friendly name for main page sections
     private val codeNames = mapOf(
-        "us" to "🇺🇸 United States",
-        "gb" to "🇬🇧 United Kingdom",
-        "es" to "🇪🇸 Spain",
-        "de" to "🇩🇪 Germany",
-        "au" to "🇦🇺 Australia",
-        "fr" to "🇫🇷 France",
-        "it" to "🇮🇹 Italy",
-        "br" to "🇧🇷 Brazil",
-        "pl" to "🇵🇱 Poland",
-        "za" to "🇿🇦 South Africa",
-        "gr" to "🇬🇷 Greece",
-        "rs" to "🇷🇸 Serbia",
-        "hr" to "🇭🇷 Croatia",
-        "sa" to "🇸🇦 Saudi Arabia",
-        "pt" to "🇵🇹 Portugal",
-        "nl" to "🇳🇱 Netherlands",
-        "at" to "🇦🇹 Austria",
-        "cz" to "🇨🇿 Czech Republic",
-        "dk" to "🇩🇰 Denmark",
-        "se" to "🇸🇪 Sweden",
-        "il" to "🇮🇱 Israel",
-        "ar" to "🇦🇷 Argentina",
-        "mx" to "🇲🇽 Mexico",
-        "tr" to "🇹🇷 Turkey",
-        "ro" to "🇷🇴 Romania",
-        "cy" to "🇨🇾 Cyprus",
-        "in" to "🇮🇳 India",
-        "be" to "🇧🇪 Belgium",
-        "ae" to "🇦🇪 UAE",
-        "hu" to "🇭🇺 Hungary",
-        "uy" to "🇺🇾 Uruguay",
-        "cl" to "🇨🇱 Chile",
-        "co" to "🇨🇴 Colombia",
-        "eg" to "🇪🇬 Egypt",
-        "ru" to "🇷🇺 Russia"
+        "us" to "🇺🇸 United States", "gb" to "🇬🇧 United Kingdom",
+        "es" to "🇪🇸 Spain", "de" to "🇩🇪 Germany", "au" to "🇦🇺 Australia",
+        "fr" to "🇫🇷 France", "it" to "🇮🇹 Italy", "br" to "🇧🇷 Brazil",
+        "pl" to "🇵🇱 Poland", "za" to "🇿🇦 South Africa", "gr" to "🇬🇷 Greece",
+        "rs" to "🇷🇸 Serbia", "hr" to "🇭🇷 Croatia", "sa" to "🇸🇦 Saudi Arabia",
+        "pt" to "🇵🇹 Portugal", "nl" to "🇳🇱 Netherlands", "at" to "🇦🇹 Austria",
+        "cz" to "🇨🇿 Czech Republic", "dk" to "🇩🇰 Denmark", "se" to "🇸🇪 Sweden",
+        "il" to "🇮🇱 Israel", "ar" to "🇦🇷 Argentina", "mx" to "🇲🇽 Mexico",
+        "tr" to "🇹🇷 Turkey", "ro" to "🇷🇴 Romania", "cy" to "🇨🇾 Cyprus",
+        "in" to "🇮🇳 India", "be" to "🇧🇪 Belgium", "ae" to "🇦🇪 UAE",
+        "hu" to "🇭🇺 Hungary", "uy" to "🇺🇾 Uruguay", "cl" to "🇨🇱 Chile",
+        "co" to "🇨🇴 Colombia", "eg" to "🇪🇬 Egypt", "ru" to "🇷🇺 Russia"
     )
 
     override val mainPage = mainPageOf(
@@ -107,26 +84,20 @@ class CDNLiveTV : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = request.data
-        val items = mutableListOf<HomePageList>()
-
         return try {
             when {
-                url.contains("plan=all") -> getLiveChannels()
-                url.contains("&code=") -> getChannelsByCountry(url)
-                url.contains("/channels/") -> getAllChannels(url)
-                else -> newHomePageResponse(list = items, hasNext = false)
+                request.data.contains("plan=all") -> getLiveChannels()
+                request.data.contains("&code=") -> getChannelsByCountry(request.data)
+                request.data.contains("/channels/") -> getAllChannels(request.data)
+                else -> newHomePageResponse(list = mutableListOf(), hasNext = false)
             }
         } catch (e: Exception) {
-            newHomePageResponse(list = items, hasNext = false)
+            newHomePageResponse(list = mutableListOf(), hasNext = false)
         }
     }
 
     private suspend fun fetchAllChannels(): List<ChannelData> {
-        if (isCacheValid()) {
-            return getCachedChannels()!!
-        }
-
+        if (isCacheValid()) return getCachedChannels()!!
         val mapper = jacksonObjectMapper().registerKotlinModule()
         val textdoc = withContext(Dispatchers.IO) {
             app.get("${mainUrl}/channels/?user=cdnlivetv&plan=free", headers = headers).text
@@ -138,179 +109,167 @@ class CDNLiveTV : MainAPI() {
 
     private suspend fun getLiveChannels(): HomePageResponse {
         val items = mutableListOf<HomePageList>()
-        val mapper = jacksonObjectMapper().registerKotlinModule()
-
         try {
-            val allChannels = fetchAllChannels()
-            val liveChannels = allChannels.filter { it.status == "online" && it.viewers ?: 0 > 0 }
+            val liveChannels = fetchAllChannels()
+                .filter { it.status == "online" && (it.viewers ?: 0) > 0 }
                 .sortedByDescending { it.viewers ?: 0 }
 
             if (liveChannels.isNotEmpty()) {
-                val dayItems = mutableListOf<LiveSearchResponse>()
-                for (ch in liveChannels) {
-                    val playerUrl = "https://cdnlivetv.tv/api/v1/channels/player/?name=${java.net.URLEncoder.encode(ch.name ?: continue, "UTF-8")}&code=${ch.code ?: "us"}&user=cdnlivetv&plan=free"
-                    dayItems.add(
-                        newLiveSearchResponse(
-                            ch.name ?: "Unknown",
-                            playerUrl,
-                            TvType.Live
-                        ) {
-                            this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
-                            this.posterHeaders = posterHeaders
-                        }
-                    )
+                val dayItems = liveChannels.mapNotNull { ch ->
+                    val playerUrl = buildPlayerUrl(ch.name ?: return@mapNotNull null, ch.code ?: "us")
+                    newLiveSearchResponse(ch.name, playerUrl, TvType.Live) {
+                        this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
+                        this.posterHeaders = posterHeaders
+                    }
                 }
-
-                items.add(
-                    HomePageList(
-                        name = "🔴 Live Now",
-                        list = dayItems,
-                        isHorizontalImages = false
-                    )
-                )
+                items.add(HomePageList("🔴 Live Now", dayItems, isHorizontalImages = false))
             }
-        } catch (e: Exception) {
-            // Fallback
-        }
-
+        } catch (_: Exception) {}
         return newHomePageResponse(list = items, hasNext = false)
     }
 
     private suspend fun getAllChannels(url: String): HomePageResponse {
-        val mapper = jacksonObjectMapper().registerKotlinModule()
         val items = mutableListOf<HomePageList>()
-
         try {
-            val channels = fetchAllChannels()
-            val dayItems = mutableListOf<LiveSearchResponse>()
-
-            for (ch in channels) {
-                if (ch.name.isNullOrBlank()) continue
-                val playerUrl = "https://cdnlivetv.tv/api/v1/channels/player/?name=${java.net.URLEncoder.encode(ch.name, "UTF-8")}&code=${ch.code ?: "us"}&user=cdnlivetv&plan=free"
-
-                dayItems.add(
-                    newLiveSearchResponse(
-                        ch.name ?: "Unknown",
-                        playerUrl,
-                        TvType.Live
-                    ) {
-                        this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
-                        this.posterHeaders = posterHeaders
-                    }
-                )
+            val dayItems = fetchAllChannels().mapNotNull { ch ->
+                if (ch.name.isNullOrBlank()) return@mapNotNull null
+                val playerUrl = buildPlayerUrl(ch.name, ch.code ?: "us")
+                newLiveSearchResponse(ch.name, playerUrl, TvType.Live) {
+                    this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
+                    this.posterHeaders = posterHeaders
+                }
             }
-
             if (dayItems.isNotEmpty()) {
-                items.add(
-                    HomePageList(
-                        name = "📺 All Channels",
-                        list = dayItems,
-                        isHorizontalImages = false
-                    )
-                )
+                items.add(HomePageList("📺 All Channels", dayItems, isHorizontalImages = false))
             }
-        } catch (e: Exception) {
-            // Fallback
-        }
-
+        } catch (_: Exception) {}
         return newHomePageResponse(list = items, hasNext = false)
     }
 
     private suspend fun getChannelsByCountry(url: String): HomePageResponse {
-        val code = url.substringAfterLast("code=").substringBefore("&").takeIf { it.isNotBlank() } ?: return newHomePageResponse(list = mutableListOf(), hasNext = false)
-
-        val mapper = jacksonObjectMapper().registerKotlinModule()
+        val code = url.substringAfterLast("code=").substringBefore("&").takeIf { it.isNotBlank() }
+            ?: return newHomePageResponse(list = mutableListOf(), hasNext = false)
         val items = mutableListOf<HomePageList>()
-
         try {
-            val allChannels = fetchAllChannels()
-            val filtered = allChannels.filter { (it.code ?: "").equals(code, ignoreCase = true) }
-
+            val filtered = fetchAllChannels().filter { (it.code ?: "").equals(code, ignoreCase = true) }
             if (filtered.isNotEmpty()) {
-                val dayItems = mutableListOf<LiveSearchResponse>()
-                for (ch in filtered) {
-                    if (ch.name.isNullOrBlank()) continue
-                    val playerUrl = "https://cdnlivetv.tv/api/v1/channels/player/?name=${java.net.URLEncoder.encode(ch.name, "UTF-8")}&code=${ch.code ?: "us"}&user=cdnlivetv&plan=free"
-
-                    dayItems.add(
-                        newLiveSearchResponse(
-                            ch.name ?: "Unknown",
-                            playerUrl,
-                            TvType.Live
-                        ) {
-                            this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
-                            this.posterHeaders = posterHeaders
-                        }
-                    )
+                val dayItems = filtered.mapNotNull { ch ->
+                    if (ch.name.isNullOrBlank()) return@mapNotNull null
+                    val playerUrl = buildPlayerUrl(ch.name, ch.code ?: "us")
+                    newLiveSearchResponse(ch.name, playerUrl, TvType.Live) {
+                        this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
+                        this.posterHeaders = posterHeaders
+                    }
                 }
-
-                val countryName = codeNames[code.lowercase()] ?: code.uppercase()
-                items.add(
-                    HomePageList(
-                        name = countryName,
-                        list = dayItems,
-                        isHorizontalImages = false
-                    )
-                )
+                items.add(HomePageList(codeNames[code.lowercase()] ?: code.uppercase(), dayItems, isHorizontalImages = false))
             }
-        } catch (e: Exception) {
-            // Fallback
-        }
-
+        } catch (_: Exception) {}
         return newHomePageResponse(list = items, hasNext = false)
+    }
+
+    private fun buildPlayerUrl(channelName: String, code: String): String {
+        return "https://cdnlivetv.tv/api/v1/channels/player/?name=${java.net.URLEncoder.encode(channelName, "UTF-8")}&code=$code&user=cdnlivetv&plan=free"
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.lowercase().trim()
         val results = mutableListOf<SearchResponse>()
-
         try {
-            val channels = if (isCacheValid()) {
-                getCachedChannels()!!
-            } else {
-                fetchAllChannels()
-            }.filter { ch ->
-                val name = ch.name ?: return@filter false
-                name.lowercase().contains(q)
-            }
+            val channels = (if (isCacheValid()) getCachedChannels()!! else fetchAllChannels())
+                .filter { (it.name ?: "").lowercase().contains(q) }
 
             for (ch in channels) {
-                val playerUrl = "https://cdnlivetv.tv/api/v1/channels/player/?name=${java.net.URLEncoder.encode(ch.name ?: continue, "UTF-8")}&code=${ch.code ?: "us"}&user=cdnlivetv&plan=free"
-
-                results.add(
-                    newLiveSearchResponse(
-                        ch.name ?: "Unknown",
-                        playerUrl,
-                        TvType.Live
-                    ) {
-                        this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
-                        this.posterHeaders = posterHeaders
-                    }
-                )
+                val playerUrl = buildPlayerUrl(ch.name ?: continue, ch.code ?: "us")
+                results.add(newLiveSearchResponse(ch.name, playerUrl, TvType.Live) {
+                    this.posterUrl = ch.image?.takeIf { it.isNotBlank() }
+                    this.posterHeaders = posterHeaders
+                })
             }
-        } catch (e: Exception) {
-            // Search failed
-        }
-
+        } catch (_: Exception) {}
         return results
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse> {
-        return search(query)
-    }
+    override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
+    /**
+     * Parses the player URL, fetches channel metadata from the API,
+     * and returns a LoadResponse with proper title/poster/description.
+     */
     override suspend fun load(url: String): LoadResponse? {
         return try {
-            newMovieLoadResponse(
-                name,
-                url,
-                TvType.Live,
-                url
-            ) {
+            val params = parsePlayerUrl(url)
+            val channelName = params.first ?: return null
+            val channelCode = params.second ?: "us"
+
+            val mapper = jacksonObjectMapper().registerKotlinModule()
+            val apiUrl = "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=$channelCode"
+            val responseText = app.get(apiUrl, headers = headers).text
+            val channelResponse: ChannelResponse = mapper.readValue(responseText)
+
+            // Match by encoded or raw name
+            val channelData = channelResponse.channels.find { ch ->
+                (ch.name ?: "").equals(channelName, ignoreCase = true)
+                        || java.net.URLEncoder.encode(ch.name ?: "", "UTF-8")
+                            .equals(channelName, ignoreCase = true)
+            }
+
+            val title = channelData?.name ?: java.net.URLDecoder.decode(channelName, "UTF-8")
+            val status = channelData?.status ?: "unknown"
+            val viewers = channelData?.viewers
+            val description = "Status: $status" +
+                    if (viewers != null && viewers > 0) " | Viewers: $viewers" else ""
+            val posterUrl = channelData?.image?.takeIf { it.isNotBlank() }
+
+            newMovieLoadResponse(title, url, TvType.Live, url) {
+                this.posterUrl = posterUrl
                 this.posterHeaders = posterHeaders
+                this.plot = description
             }
         } catch (e: Exception) {
-            null
+            // Fallback: return basic response
+            try {
+                newMovieLoadResponse(name, url, TvType.Live, url) {
+                    this.posterHeaders = posterHeaders
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /**
+     * Dispatches the player URL directly to the WebView-based extractor.
+     * The CDNLiveTVExtractor will render the OPlayer page and intercept the .m3u8 stream.
+     */
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            loadExtractor(
+                url = data,
+                referer = "https://cdnlivetv.tv/",
+                subtitleCallback = subtitleCallback,
+                callback = callback
+            )
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Parses ?name=XXX&code=YYY from a player URL */
+    private fun parsePlayerUrl(url: String): Pair<String?, String?> {
+        return try {
+            val uri = java.net.URI(url)
+            val params = uri.query?.split("&")?.associate {
+                val parts = it.split("=", limit = 2)
+                if (parts.size == 2) parts[0] to parts[1] else it to ""
+            } ?: emptyMap()
+            params["name"] to (params["code"] ?: "us")
+        } catch (_: Exception) {
+            null to null
         }
     }
 
