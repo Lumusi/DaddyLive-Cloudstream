@@ -8,6 +8,8 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 
 /**
@@ -16,13 +18,20 @@ import kotlinx.coroutines.withContext
  * Architecture:
  * - API domain: api.cdnlivetv.ru (unprotected JSON API, 762 channels, 38 countries)
  * - Player domain: cdnlivetv.tv (Cloudflare-protected, OPlayer-based)
+ * - Events domain: api.cdnlivetv.tv/events/sports/{sport}/
  *
- * Flow:
- * 1. API (/channels/) provides channel list with metadata (name, code, viewers, image, status)
- * 2. Player URL constructed: /api/v1/channels/player/?name={NAME}&code={CODE}&user=...
- * 3. load() enriches metadata from API (title, poster, description)
- * 4. loadLinks() dispatches the player URL to the WebView extractor
- * 5. WebView renders OPlayer, captures .m3u8 from network requests
+ * Flow (channels):
+ * 1. API (/channels/) provides channel list with metadata
+ * 2. Player URL constructed: cdnlivetv.tv/api/v1/channels/player/?name=...&code=...
+ * 3. load() enriches from API, loadLinks() dispatches to WebView extractor
+ *
+ * Flow (events):
+ * 1. API (/events/sports/{sport}/) provides event list with embedded channel sources
+ * 2. Events listed in catalog by sport category
+ * 3. load() enriches event with match details, poster, description
+ * 4. loadLinks() iterates event.channels[] and dispatches each to WebView extractor
+ * 5. User picks preferred source from available feeds
+ * 6. WebView renders OPlayer, captures .m3u8 from network requests
  */
 class CDNLiveTV : MainAPI() {
     override var mainUrl = "https://api.cdnlivetv.ru/api/v1"
@@ -72,6 +81,22 @@ class CDNLiveTV : MainAPI() {
         "co" to "🇨🇴 Colombia", "eg" to "🇪🇬 Egypt", "ru" to "🇷🇺 Russia"
     )
 
+    /** Sport slug → display name mapping for the events catalog */
+    private val sportLabels = mapOf(
+        "soccer" to "⚽ Soccer",
+        "basketball" to "🏀 Basketball",
+        "tennis" to "🎾 Tennis",
+        "hockey" to "🏒 Hockey",
+        "cricket" to "🏏 Cricket",
+        "golf" to "⛳ Golf",
+        "mma" to "🥊 MMA",
+        "motorsport" to "🏎️ Motorsport",
+        "cycling" to "🚴 Cycling",
+        "volleyball" to "🏐 Volleyball",
+        "handball" to "🤾 Handball",
+        "darts" to "🎯 Darts"
+    )
+
     override val mainPage = mainPageOf(
         "${mainUrl}/channels/?user=cdnlivetv&plan=free" to "📺 All Channels",
         "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=us" to "🇺🇸 US",
@@ -81,11 +106,25 @@ class CDNLiveTV : MainAPI() {
         "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=au" to "🇦🇺 Australia",
         "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=br" to "🇧🇷 Brazil",
         "${mainUrl}/channels/?user=cdnlive&plan=all" to "🔴 Live Now",
+        // --- Sport Events ---
+        "${mainUrl}/events/soccer/" to "⚽ Soccer",
+        "${mainUrl}/events/basketball/" to "🏀 Basketball",
+        "${mainUrl}/events/tennis/" to "🎾 Tennis",
+        "${mainUrl}/events/hockey/" to "🏒 Hockey",
+        "${mainUrl}/events/motorsport/" to "🏎️ Motorsport",
+        "${mainUrl}/events/handball/" to "🤾 Handball",
+        "${mainUrl}/events/golf/" to "⛳ Golf",
+        "${mainUrl}/events/cricket/" to "🏏 Cricket",
+        "${mainUrl}/events/cycling/" to "🚴 Cycling",
+        "${mainUrl}/events/volleyball/" to "🏐 Volleyball",
+        "${mainUrl}/events/mma/" to "🥊 MMA",
+        "${mainUrl}/events/darts/" to "🎯 Darts",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
             when {
+                request.data.contains("/events/sports/") || request.data.contains("/events/") -> getSportEvents(request.data)
                 request.data.contains("plan=all") -> getLiveChannels()
                 request.data.contains("&code=") -> getChannelsByCountry(request.data)
                 request.data.contains("/channels/") -> getAllChannels(request.data)
@@ -167,6 +206,81 @@ class CDNLiveTV : MainAPI() {
         return newHomePageResponse(list = items, hasNext = false)
     }
 
+    /**
+     * Fetch sport events from the /events/sports/{sport}/ endpoint.
+     * Each event contains a channels[] array listing all broadcast sources
+     * (typically from different countries), giving the user a source picker.
+     */
+    private suspend fun getSportEvents(url: String): HomePageResponse {
+        // Extract sport slug from URL: .../events/soccer/  or  .../events/soccer
+        val sport = url.substringAfterLast("/events/").trimEnd('/')
+            .substringBefore("/").takeIf { it.isNotBlank() }
+            ?: return newHomePageResponse(list = mutableListOf(), hasNext = false)
+
+        val label = sportLabels[sport.lowercase()] ?: sport.replaceFirstChar { it.uppercase() }
+
+        return try {
+            val events = fetchEvents(sport)
+                .filter { it.channels?.isNotEmpty() == true }
+                .sortedWith(
+                    compareByDescending<Event> { it.status == "live" }
+                        .thenBy { it.start ?: "" }
+                )
+
+            val items = events.mapNotNull { event ->
+                val title = "${event.homeTeam ?: "?"} vs ${event.awayTeam ?: "?"}"
+                val playerUrl = event.channels?.firstOrNull()?.url
+                    ?: return@mapNotNull null
+
+                // Build a detail URL referencing the gameID for load()/loadLinks()
+                val gameID = event.gameID ?: return@mapNotNull null
+                val detailUrl = "https://cdnlivetv.tv/event/watch/$gameID"
+
+                val statusIcon = when (event.status) {
+                    "live" -> "🔴 LIVE"
+                    "upcoming" -> "⏳ Upcoming"
+                    else -> event.status ?: ""
+                }
+                val tournament = event.tournament?.let { " — $it" } ?: ""
+                val country = event.country?.let { " ($it)" } ?: ""
+
+                newLiveSearchResponse(
+                    "$title $statusIcon",
+                    detailUrl,
+                    TvType.Live
+                ) {
+                    this.plot = "${event.time ?: ""}$tournament$country"
+                    // Use country flag as poster
+                    this.posterUrl = event.countryIMG?.takeIf { it.isNotBlank() }
+                    this.posterHeaders = posterHeaders
+                }
+            }
+
+            newHomePageResponse(
+                list = HomePageList(label, items, isHorizontalImages = false),
+                hasNext = false
+            )
+        } catch (e: Exception) {
+            newHomePageResponse(list = mutableListOf(), hasNext = false)
+        }
+    }
+
+    private suspend fun fetchEvents(sport: String): List<Event> {
+        val mapper = jacksonObjectMapper().registerKotlinModule()
+        val responseUrl = "${mainUrl}/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
+        val text = app.get(responseUrl, headers = headers).text
+
+        // Response structure: { "Soccer": [...events...], "total_events": 79, "cached": true }
+        // The sport-keyed array is dynamic, so we parse into a Map first
+        val raw: Map<String, Any> = mapper.readValue(text)
+        val eventsKey = raw.keys.firstOrNull {
+            it !in setOf("total_events", "cached", "timestamp", "cdn-live-tv")
+        } ?: return emptyList()
+
+        val jsonArray = mapper.writeValueAsString(raw[eventsKey])
+        return mapper.readValue(jsonArray)
+    }
+
     private fun buildPlayerUrl(channelName: String, code: String): String {
         return "https://cdnlivetv.tv/api/v1/channels/player/?name=${java.net.URLEncoder.encode(channelName, "UTF-8")}&code=$code&user=cdnlivetv&plan=free"
     }
@@ -192,25 +306,84 @@ class CDNLiveTV : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     /**
-     * Parses the player URL, fetches channel metadata from the API,
-     * and returns a LoadResponse with proper title/poster/description.
+     * Loads event or channel detail.
+     *
+     * Event URLs (from catalog):  https://cdnlivetv.tv/event/watch/{gameID}
+     * Channel URLs (from browse): cdnlivetv.tv/api/v1/channels/player/?name=...&code=...
      */
     override suspend fun load(url: String): LoadResponse? {
-        return try {
-            val params = parsePlayerUrl(url)
-            val channelName = params.first ?: return null
-            val channelCode = params.second ?: "us"
+        return when {
+            // Event detail page
+            url.contains("/event/watch/") -> loadEvent(url)
+            // Channel player page
+            else -> loadChannel(url)
+        }
+    }
 
+    private suspend fun loadEvent(url: String): LoadResponse? {
+        return try {
+            val gameID = url.substringAfterLast("/")
+            val sport = url.substringBefore("/event/watch/").substringAfterLast("/events/")
+
+            val events = fetchEvents(sport)
+            val event = events.find { it.gameID == gameID } ?: return null
+
+            val title = "${event.homeTeam ?: "?"} vs ${event.awayTeam ?: "?"}"
+            val status = event.status ?: "unknown"
+            val viewers = event.channels
+                ?.sumOf { it.viewers ?: 0 }
+                ?.takeIf { it > 0 }
+
+            val tournament = event.tournament
+            val country = event.country
+            val time = event.time
+            val start = event.start
+
+            val description = buildString {
+                if (tournament != null) appendLine("Tournament: $tournament")
+                if (country != null) appendLine("Country: $country")
+                if (time != null) appendLine("Time: $time")
+                if (start != null) appendLine("Start: $start")
+                appendLine("Status: $status")
+                if (viewers != null) appendLine("Total viewers: $viewers")
+                val sourceCount = event.channels?.size ?: 0
+                if (sourceCount > 0) appendLine("Available sources: $sourceCount")
+            }
+
+            val posterUrl = when {
+                event.homeTeamIMG?.isNotBlank() == true -> event.homeTeamIMG
+                event.countryIMG?.isNotBlank() == true -> event.countryIMG
+                else -> null
+            }
+
+            val tags = listOfNotNull(event.country, event.tournament, event.status)
+
+            newMovieLoadResponse(title, url, TvType.Live, url) {
+                this.posterUrl = posterUrl
+                this.posterHeaders = posterHeaders
+                this.plot = description.trim()
+                this.tags = tags
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private suspend fun loadChannel(url: String): LoadResponse? {
+        val params = parsePlayerUrl(url)
+        val channelName = params.first ?: return null
+        val channelCode = params.second ?: "us"
+
+        return try {
             val mapper = jacksonObjectMapper().registerKotlinModule()
             val apiUrl = "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=$channelCode"
             val responseText = app.get(apiUrl, headers = headers).text
             val channelResponse: ChannelResponse = mapper.readValue(responseText)
 
-            // Match by encoded or raw name
             val channelData = channelResponse.channels.find { ch ->
                 (ch.name ?: "").equals(channelName, ignoreCase = true)
                         || java.net.URLEncoder.encode(ch.name ?: "", "UTF-8")
-                            .equals(channelName, ignoreCase = true)
+                    .equals(channelName, ignoreCase = true)
             }
 
             val title = channelData?.name ?: java.net.URLDecoder.decode(channelName, "UTF-8")
@@ -226,7 +399,6 @@ class CDNLiveTV : MainAPI() {
                 this.plot = description
             }
         } catch (e: Exception) {
-            // Fallback: return basic response
             try {
                 newMovieLoadResponse(name, url, TvType.Live, url) {
                     this.posterHeaders = posterHeaders
@@ -238,8 +410,13 @@ class CDNLiveTV : MainAPI() {
     }
 
     /**
-     * Dispatches the player URL directly to the WebView-based extractor.
-     * The CDNLiveTVExtractor will render the OPlayer page and intercept the .m3u8 stream.
+     * Multi-source link extraction.
+     *
+     * Handles two scenarios:
+     * 1. Channel URL (browse/catalog): finds ALL channels with same name across countries,
+     *    dispatches each to WebView extractor for source picker.
+     * 2. Event URL (event detail): uses the event's channels[] directly from API data,
+     *    dispatches each channel's player URL to WebView extractor.
      */
     override suspend fun loadLinks(
         data: String,
@@ -247,16 +424,142 @@ class CDNLiveTV : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            loadExtractor(
-                url = data,
-                referer = "https://cdnlivetv.tv/",
-                subtitleCallback = subtitleCallback,
-                callback = callback
-            )
+        return@withContext try {
+            when {
+                data.contains("/event/watch/") -> loadLinksFromEvent(data, subtitleCallback, callback)
+                else -> loadLinksFromChannel(data, subtitleCallback, callback)
+            }
         } catch (e: Exception) {
             false
         }
+    }
+
+    /**
+     * Event-based multi-source: uses the event's channels[] from the API.
+     * Each channel in the event is dispatched to the WebView extractor.
+     */
+    private suspend fun loadLinksFromEvent(
+        url: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val gameID = url.substringAfterLast("/")
+        val sport = url.substringBefore("/event/watch/").substringAfterLast("/events/")
+
+        val events = fetchEvents(sport)
+        val event = events.find { it.gameID == gameID } ?: return false
+        val channels = event.channels?.filter { it?.url?.isNotBlank() == true } ?: return false
+
+        val deferredJobs = channels.mapNotNull { eventChannel ->
+            val sourceUrl = eventChannel.url ?: return@mapNotNull null
+            async {
+                try {
+                    val sourceLabel = buildSourceLabel(eventChannel)
+                    var success = false
+                    loadExtractor(
+                        url = sourceUrl,
+                        referer = "https://cdnlivetv.tv/",
+                        subtitleCallback = subtitleCallback,
+                        callback = { link ->
+                            callback(ExtractorLink(
+                                source = "${link.source} [$sourceLabel]",
+                                name = "${link.name} [$sourceLabel]",
+                                url = link.url,
+                                referer = link.referer,
+                                quality = link.quality,
+                                type = link.type,
+                                headers = link.headers
+                            ))
+                            success = true
+                        }
+                    )
+                    success
+                } catch (_: Exception) {
+                    false
+                }
+            }
+        }
+
+        val results = deferredJobs.awaitAll()
+        return results.any { it }
+    }
+
+    /**
+     * Channel-based multi-source: finds all channels sharing the same name
+     * across different country codes and dispatches each to the extractor.
+     */
+    private suspend fun loadLinksFromChannel(
+        data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val params = parsePlayerUrl(data)
+        val channelName = params.first ?: return false
+
+        val channels = fetchAllChannels()
+        val matches = channels.filter { ch ->
+            ch.name?.equals(channelName, ignoreCase = true) == true
+        }
+
+        if (matches.isEmpty()) {
+            // No multi-source matches, use the original URL
+            return try {
+                loadExtractor(
+                    url = data,
+                    referer = "https://cdnlivetv.tv/",
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        val deferredJobs = matches.map { ch ->
+            val sourceUrl = buildPlayerUrl(ch.name ?: return@map null, ch.code ?: "us")
+            async {
+                try {
+                    val sourceLabel = codeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
+                    var success = false
+                    loadExtractor(
+                        url = sourceUrl,
+                        referer = "https://cdnlivetv.tv/",
+                        subtitleCallback = subtitleCallback,
+                        callback = { link ->
+                            callback(ExtractorLink(
+                                source = "${link.source} [$sourceLabel]",
+                                name = "${link.name} [$sourceLabel]",
+                                url = link.url,
+                                referer = link.referer,
+                                quality = link.quality,
+                                type = link.type,
+                                headers = link.headers
+                            ))
+                            success = true
+                        }
+                    )
+                    success
+                } catch (_: Exception) {
+                    false
+                }
+            }
+        }
+
+        val results = deferredJobs.awaitAll()
+        return results.any { it }
+    }
+
+    private fun buildSourceLabel(channel: EventChannel): String {
+        val countryName = channel.channelCode
+            ?.let { codeNames[it.lowercase()] }
+            ?: channel.channelCode?.uppercase()
+            ?: "Unknown"
+        val chName = channel.channelName?.takeIf { it.isNotBlank() }
+        return if (chName != null) "$chName ($countryName)" else countryName
+    }
+
+    private fun buildPlayerUrl(channelName: String, code: String): String {
+        return "https://cdnlivetv.tv/api/v1/channels/player/?name=${java.net.URLEncoder.encode(channelName, "UTF-8")}&code=$code&user=cdnlivetv&plan=free"
     }
 
     /** Parses ?name=XXX&code=YYY from a player URL */
