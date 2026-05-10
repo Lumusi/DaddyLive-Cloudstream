@@ -6,6 +6,8 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * PPV.to - Sports streaming portal
@@ -43,22 +45,35 @@ class PPVTO : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
-            val response = app.get(API_URL, headers = headers)
-            val apiResponse = jacksonObjectMapper().registerKotlinModule()
-                .readValue<StreamsResponse>(response)
+            val mapper = jacksonObjectMapper().registerKotlinModule()
+            val textdoc = withContext(Dispatchers.IO) {
+                app.get(API_URL, headers = headers).text
+            }
+            val apiResponse = mapper.readValue<StreamsResponse>(textdoc)
             
-            val items = mutableListOf<HomePageItem>()
-            apiResponse.output?.forEach { category ->
+            val items = mutableListOf<HomePageList>()
+            val categoryItems = mutableListOf<LiveSearchResponse>()
+            
+            apiResponse.streams?.forEach { category ->
                 category.streams.forEach { stream ->
-                    items.add(HomePageItem(
-                        title = stream.name ?: continue,
-                        synopsis = "${stream.category_name} • ${stream.tag ?: ""}",
-                        poster = stream.poster ?: "",
-                        url = "$EMBED_URL/${stream.uri_name}",
-                        id = stream.id.toString()
-                    ))
+                    val title = stream.name ?: return@forEach
+                    val url = "$EMBED_URL/${stream.uri_name}"
+                    categoryItems.add(
+                        newLiveSearchResponse(title, url, TvType.Live) {
+                            posterUrl = stream.poster
+                            description = "${stream.category_name} • ${stream.tag ?: ""}"
+                        }
+                    )
                 }
             }
+            
+            items.add(
+                HomePageList(
+                    name = "Categories",
+                    list = categoryItems,
+                    isHorizontalImages = false
+                )
+            )
             
             newHomePageResponse(list = items, hasNext = false)
         } catch (e: Exception) {
@@ -68,25 +83,27 @@ class PPVTO : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         return try {
-            val response = app.get(API_URL, headers = headers)
-            val apiResponse = jacksonObjectMapper().registerKotlinModule()
-                .readValue<StreamsResponse>(response)
+            val mapper = jacksonObjectMapper().registerKotlinModule()
+            val textdoc = withContext(Dispatchers.IO) {
+                app.get(API_URL, headers = headers).text
+            }
+            val apiResponse = mapper.readValue<StreamsResponse>(textdoc)
             
             val results = mutableListOf<SearchResponse>()
             val queryLower = query.lowercase()
             
-            apiResponse.output?.forEach { category ->
+            apiResponse.streams?.forEach { category ->
                 category.streams.forEach { stream ->
-                    if (stream.name?.lowercase()?.contains(queryLower) == true ||
-                        stream.category_name?.lowercase()?.contains(queryLower) == true) {
-                        results.add(SearchResponse(
-                            extractor = name,
-                            id = stream.id.toString(),
-                            title = stream.name ?: continue,
-                            description = "${stream.category_name} • ${stream.tag ?: ""}",
-                            poster = stream.poster ?: "",
-                            url = "$EMBED_URL/${stream.uri_name}"
-                        ))
+                    val name = stream.name ?: return@forEach
+                    if (name.lowercase().contains(queryLower) ||
+                        (stream.category_name?.lowercase()?.contains(queryLower) == true)) {
+                        val url = "$EMBED_URL/${stream.uri_name}"
+                        results.add(
+                            newLiveSearchResponse(name, url, TvType.Live) {
+                                posterUrl = stream.poster
+                                description = "${stream.category_name} • ${stream.tag ?: ""}"
+                            }
+                        )
                     }
                 }
             }
@@ -102,24 +119,25 @@ class PPVTO : MainAPI() {
         val uriName = url.substringAfter("$EMBED_URL/")
         
         return try {
-            val response = app.get(API_URL, headers = headers)
-            val apiResponse = jacksonObjectMapper().registerKotlinModule()
-                .readValue<StreamsResponse>(response)
+            val mapper = jacksonObjectMapper().registerKotlinModule()
+            val textdoc = withContext(Dispatchers.IO) {
+                app.get(API_URL, headers = headers).text
+            }
+            val apiResponse = mapper.readValue<StreamsResponse>(textdoc)
             
-            val stream = apiResponse.output?.flatMap { it.streams }
+            val stream = apiResponse.streams?.flatMap { it.streams }
                 ?.find { it.uri_name == uriName }
             
             stream?.let {
-                LoadResponse(
-                    extractor = name,
-                    id = it.id.toString(),
+                newMovieLoadResponse(
                     title = it.name ?: "Unknown",
-                    description = it.category_name,
-                    poster = it.poster ?: "",
                     url = url,
-                    isLive = it.always_live == 1,
-                    duration = 0L
-                )
+                    TvType.Live,
+                    url
+                ) {
+                    posterUrl = it.poster
+                    description = it.category_name
+                }
             }
         } catch (e: Exception) {
             null
@@ -137,7 +155,7 @@ class PPVTO : MainAPI() {
             // Handles the adware-heavy embed page (pooembed.eu)
             loadExtractor(
                 url = data,
-                referer = mainUrl,
+                referer = "$mainUrl/",
                 subtitleCallback = subtitleCallback,
                 callback = callback
             )
@@ -151,14 +169,15 @@ class PPVTO : MainAPI() {
 // API Response Data Classes
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class StreamsResponse(
-    @JsonProperty("status") val status: String? = null,
-    @JsonProperty("output") val output: List<CategoryData>? = null
+    @JsonProperty("success") val success: Boolean? = null,
+    @JsonProperty("streams") val streams: List<CategoryData>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class CategoryData(
     @JsonProperty("category") val category: String? = null,
     @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("always_live") val always_live: Boolean? = null,
     @JsonProperty("streams") val streams: List<StreamData> = emptyList()
 )
 
@@ -169,7 +188,6 @@ data class StreamData(
     @JsonProperty("tag") val tag: String? = null,
     @JsonProperty("poster") val poster: String? = null,
     @JsonProperty("uri_name") val uri_name: String? = null,
-    @JsonProperty("always_live") val always_live: Int = 0,
     @JsonProperty("category_name") val category_name: String? = null,
     @JsonProperty("iframe") val iframe: String? = null
 )
