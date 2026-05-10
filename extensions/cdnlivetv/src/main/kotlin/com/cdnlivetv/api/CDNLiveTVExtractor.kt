@@ -48,9 +48,12 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
     }
 
     /**
-     * Primary extraction: WebView-first approach.
+     * Primary extraction: WebView-first approach with retry logic.
      * The player page requires browser rendering (Cloudflare + OPlayer JS).
      * HTTP-only approaches return 401 due to Cloudflare challenge.
+     *
+     * Fire TV Compatibility: Includes retry mechanism for failed extractions
+     * due to slower hardware or network issues.
      */
     override suspend fun getUrl(
         url: String,
@@ -59,20 +62,28 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         // Primary: WebView extraction (handles Cloudflare + OPlayer)
-        try {
-            val normalizedUrl = url.replaceFirst("http://", "https://")
-            val videoUrl = withContext(Dispatchers.Main) {
-                getVideoUrlWithWebView(appContext, normalizedUrl)
+        // Try up to 2 times for Fire TV compatibility
+        var lastError: Exception? = null
+        repeat(2) { attempt ->
+            try {
+                val normalizedUrl = url.replaceFirst("http://", "https://")
+                val videoUrl = withContext(Dispatchers.Main) {
+                    getVideoUrlWithWebView(appContext, normalizedUrl)
+                }
+                if (videoUrl != null) {
+                    processVideoUrl(videoUrl, callback)
+                    return
+                }
+            } catch (e: Exception) {
+                lastError = e
+                // Wait before retry (exponential backoff)
+                if (attempt < 1) {
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
+                }
             }
-            if (videoUrl != null) {
-                processVideoUrl(videoUrl, callback)
-                return
-            }
-        } catch (e: Exception) {
-            // Fall through to fallback
         }
 
-        // Fallback: Try direct .m3u8 (in case URL itself is a stream link)
+        // If WebView failed after retries, try fallback
         tryExtractDirectUrl(url, callback)
     }
 
@@ -102,14 +113,18 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
     /**
      * Launches a headless WebView to render the OPlayer page and capture
      * the .m3u8 stream URL from network requests.
+     *
+     * Fire TV Compatibility: Uses longer timeout and more robust settings
+     * for older WebView implementations on Amazon Fire TV devices.
      */
     private suspend fun getVideoUrlWithWebView(context: Context, url: String): String? {
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<String?> { cont ->
                 val captured = AtomicBoolean(false)
+                var webView: WebView? = null
 
                 try {
-                    val webView = WebView(context).apply {
+                    webView = WebView(context).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.allowFileAccess = true
@@ -124,12 +139,17 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                         settings.allowFileAccessFromFileURLs = true
                         settings.allowUniversalAccessFromFileURLs = true
 
+                        // Fire TV compatibility: Enable more permissive settings
+                        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.databaseEnabled = true
+                        settings.setGeolocationEnabled(false)
+
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
 
                                 // Wait for OPlayer to load, then attempt to trigger playback
-                                // OPlayer uses either CSS play button or JS API
+                                // Fire TV needs longer delay for slower JS execution
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     view?.evaluateJavascript(
                                         """
@@ -158,8 +178,10 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                                             }
                                         })();
                                         """.trimIndent()
-                                    ) { _ -> }
-                                }, 2500) // Wait 2.5s for OPlayer to fully initialize
+                                    ) { result ->
+                                        // Log result for debugging (optional)
+                                    }
+                                }, 3500) // Increased to 3.5s for Fire TV compatibility
                             }
 
                             @Suppress("DEPRECATION")
@@ -191,20 +213,21 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                                 error: android.webkit.WebResourceError?
                             ) {
                                 super.onReceivedError(view, request, error)
-                                // Don't fail on sub-resource errors
+                                // Don't fail on sub-resource errors (common on Fire TV)
                             }
                         }
                     }
 
                     webView.loadUrl(url)
 
-                    // Timeout after 20 seconds (Cloudflare may add delay)
+                    // Increased timeout to 30 seconds for Fire TV compatibility
+                    // Fire TV hardware is slower and needs more time for Cloudflare + OPlayer
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
                             cont.resume(null, onCancellation = null)
-                            try { webView.destroy() } catch (_: Exception) {}
+                            try { webView?.destroy() } catch (_: Exception) {}
                         }
-                    }, 20000)
+                    }, 30000)
 
                 } catch (e: Exception) {
                     if (captured.compareAndSet(false, true)) {
@@ -215,7 +238,7 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                 cont.invokeOnCancellation {
                     if (captured.compareAndSet(false, true)) {
                         Handler(Looper.getMainLooper()).post {
-                            try { /* webView cleanup handled above */ } catch (_: Exception) {}
+                            try { webView?.destroy() } catch (_: Exception) {}
                         }
                     }
                 }
@@ -225,6 +248,9 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
 
     /**
      * Wrap the captured HLS URL into an ExtractorLink for the player.
+     *
+     * Streaming Optimization: Adds headers for better buffering and playback
+     * on slower connections and devices like Fire TV.
      */
     private suspend fun processVideoUrl(videoUrl: String, callback: (ExtractorLink) -> Unit) {
         val qualityLabel = when {
@@ -235,6 +261,20 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
             else -> name
         }
 
+        // Enhanced headers for better streaming performance
+        val streamingHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Accept" to "*/*",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Origin" to "https://cdnlivetv.tv",
+            "Referer" to "https://cdnlivetv.tv/",
+            "Connection" to "keep-alive",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site"
+        )
+
         callback.invoke(
             newExtractorLink(
                 source = name,
@@ -244,11 +284,7 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
             ) {
                 this.quality = Qualities.Unknown.value
                 this.referer = "$mainUrl/"
-                this.headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
-                    "Origin" to "https://cdnlivetv.tv",
-                    "Referer" to "$mainUrl/"
-                )
+                this.headers = streamingHeaders
             }
         )
     }
