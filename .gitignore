@@ -1,14 +1,52 @@
-*.iml
-.gradle
-/local.properties
-/.idea
+```
+# Dependencies
+.gradle/
+node_modules/
+
+# Compiled files
+*.class
+*.o
+*.obj
+*.out
+
+# Build artifacts
+build/
+dist/
+target/
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Python specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# MyPy cache
+.mypy_cache/
+.pytest_cache/
+
+# OS generated files
 .DS_Store
-/build
-**/build
-/captures
-*.lock
-.externalNativeBuild
-.cxx
-local.properties
-.vscode
-.hermes/plans/
+Thumbs.db
+```
