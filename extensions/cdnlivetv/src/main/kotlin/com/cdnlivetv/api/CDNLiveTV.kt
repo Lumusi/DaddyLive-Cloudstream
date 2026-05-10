@@ -469,41 +469,36 @@ class CDNLiveTV : MainAPI() {
         val event = events.find { it.gameID == gameID } ?: return false
         val channels = event.channels?.filter { it?.channelName?.isNotBlank() == true } ?: return false
  
-        return coroutineScope {
-            val deferredJobs = channels.mapNotNull { eventChannel ->
-                val chName = eventChannel.channelName ?: return@mapNotNull null
+        // Process each channel sequentially like Streamed does
+        channels.forEach { eventChannel ->
+            try {
+                val chName = eventChannel.channelName ?: return@forEach
                 val chCode = eventChannel.channelCode ?: "us"
-                // Build the player URL properly like we do for channels
+                val sourceLabel = buildSourceLabel(eventChannel)
                 val sourceUrl = buildPlayerUrl(chName, chCode)
-                async {
-                    try {
-                        val sourceLabel = buildSourceLabel(eventChannel)
-                        var success = false
-                        loadExtractor(
-                            url = sourceUrl,
-                            referer = "https://cdnlivetv.tv/",
-                            subtitleCallback = subtitleCallback,
-                            callback = { link ->
-                                callback(ExtractorLink(
-                                    source = "${link.source} [$sourceLabel]",
-                                    name = "${link.name} [$sourceLabel]",
-                                    url = link.url,
-                                    referer = link.referer,
-                                    quality = link.quality,
-                                    type = link.type,
-                                    headers = link.headers
-                                ))
-                                success = true
-                            }
-                        )
-                        success
-                    } catch (_: Exception) {
-                        false
+                
+                loadExtractor(
+                    url = sourceUrl,
+                    referer = "https://cdnlivetv.tv/",
+                    subtitleCallback = subtitleCallback,
+                    callback = { link ->
+                        callback(ExtractorLink(
+                            source = "${link.source} [$sourceLabel]",
+                            name = "${link.name} [$sourceLabel]",
+                            url = link.url,
+                            referer = link.referer,
+                            quality = link.quality,
+                            type = link.type,
+                            headers = link.headers
+                        ))
                     }
-                }
+                )
+            } catch (_: Exception) {
+                // Continue to next channel if one fails
             }
-            deferredJobs.awaitAll().any { it }
         }
+        
+        return true
     }
 
     /**
@@ -532,44 +527,42 @@ class CDNLiveTV : MainAPI() {
                     subtitleCallback = subtitleCallback,
                     callback = callback
                 )
+                true
             } catch (_: Exception) {
                 false
             }
         }
 
-        return coroutineScope {
-            val deferredJobs = matches.mapNotNull { ch ->
-                val chName = ch.name ?: return@mapNotNull null
-                val sourceUrl = buildPlayerUrl(chName, ch.code ?: "us")
-                async {
-                    try {
-                        val sourceLabel = codeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
-                        var success = false
-                        loadExtractor(
-                            url = sourceUrl,
-                            referer = "https://cdnlivetv.tv/",
-                            subtitleCallback = subtitleCallback,
-                            callback = { link ->
-                                callback(ExtractorLink(
-                                    source = "${link.source} [$sourceLabel]",
-                                    name = "${link.name} [$sourceLabel]",
-                                    url = link.url,
-                                    referer = link.referer,
-                                    quality = link.quality,
-                                    type = link.type,
-                                    headers = link.headers
-                                ))
-                                success = true
-                            }
-                        )
-                        success
-                    } catch (_: Exception) {
-                        false
+        // Process each match sequentially like Streamed does
+        matches.forEach { ch ->
+            try {
+                val chName = ch.name ?: return@forEach
+                val chCode = ch.code ?: "us"
+                val sourceLabel = codeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
+                val sourceUrl = buildPlayerUrl(chName, chCode)
+                
+                loadExtractor(
+                    url = sourceUrl,
+                    referer = "https://cdnlivetv.tv/",
+                    subtitleCallback = subtitleCallback,
+                    callback = { link ->
+                        callback(ExtractorLink(
+                            source = "${link.source} [$sourceLabel]",
+                            name = "${link.name} [$sourceLabel]",
+                            url = link.url,
+                            referer = link.referer,
+                            quality = link.quality,
+                            type = link.type,
+                            headers = link.headers
+                        ))
                     }
-                }
+                )
+            } catch (_: Exception) {
+                // Continue to next channel if one fails
             }
-            deferredJobs.awaitAll().any { it }
         }
+        
+        return true
     }
 
     private fun buildSourceLabel(channel: EventChannel): String {
