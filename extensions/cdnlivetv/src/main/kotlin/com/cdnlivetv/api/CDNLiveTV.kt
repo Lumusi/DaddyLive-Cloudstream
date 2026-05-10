@@ -467,11 +467,14 @@ class CDNLiveTV : MainAPI() {
             ?: fetchAllEvents().entries.firstOrNull { it.key.equals(sport, ignoreCase = true) }?.value
             ?: return false
         val event = events.find { it.gameID == gameID } ?: return false
-        val channels = event.channels?.filter { it?.url?.isNotBlank() == true } ?: return false
+        val channels = event.channels?.filter { it?.channelName?.isNotBlank() == true } ?: return false
  
         return coroutineScope {
             val deferredJobs = channels.mapNotNull { eventChannel ->
-                val sourceUrl = eventChannel.url ?: return@mapNotNull null
+                val chName = eventChannel.channelName ?: return@mapNotNull null
+                val chCode = eventChannel.channelCode ?: "us"
+                // Build the player URL properly like we do for channels
+                val sourceUrl = buildPlayerUrl(chName, chCode)
                 async {
                     try {
                         val sourceLabel = buildSourceLabel(eventChannel)
