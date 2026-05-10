@@ -1,8 +1,5 @@
 package com.ppvto
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
@@ -36,47 +33,21 @@ class PpvTo : MainAPI() {
         "24/7 Streams" to "24/7 Streams"
     )
 
-    private data class ApiResponse(
-        @JsonProperty("success") val success: Boolean?,
-        @JsonProperty("streams") val categories: List<Category>?,
-        @JsonProperty("timestamp") val timestamp: Long?,
-        @JsonProperty("READ_ME") val readMe: String?
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private data class Category(
-        @JsonProperty("category") val category: String?,
-        @JsonProperty("id") val id: Int?,
-        @JsonProperty("always_live") val alwaysLive: Boolean?,
-        @JsonProperty("streams") val streams: List<Stream>?
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private data class Stream(
-        @JsonProperty("id") val id: Int?,
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("tag") val tag: String?,
-        @JsonProperty("source_tag") val sourceTag: String?,
-        @JsonProperty("poster") val poster: String?,
-        @JsonProperty("blurhash") val blurhash: String?,
-        @JsonProperty("colors") val colors: List<String>?,
-        @JsonProperty("uri_name") val uriName: String?,
-        @JsonProperty("starts_at") val startsAt: Long?,
-        @JsonProperty("ends_at") val endsAt: Long?,
-        @JsonProperty("always_live") val alwaysLive: Int?,
-        @JsonProperty("locale") val locale: String?,
-        @JsonProperty("category_name") val categoryName: String?,
-        @JsonProperty("iframe") val iframe: String?,
-        @JsonProperty("viewers") val viewers: String?,
-        @JsonProperty("substreams") val substreams: List<Substream>?
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private data class Substream(
-        @JsonProperty("id") val id: Int?,
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("iframe") val iframe: String?,
-        @JsonProperty("viewers") val viewers: String?
+    // Simplified internal data class to avoid Jackson mapping failures
+    data class PpvStream(
+        val id: Int?,
+        val name: String?,
+        val tag: String?,
+        val sourceTag: String?,
+        val poster: String?,
+        val uriName: String?,
+        val startsAt: Long?,
+        val endsAt: Long?,
+        val alwaysLive: Int?,
+        val categoryName: String?,
+        val iframe: String?,
+        val viewers: String?,
+        val substreams: List<Map<String, Any?>>?
     )
 
     private fun getApiHeaders(): Map<String, String> {
@@ -99,57 +70,68 @@ class PpvTo : MainAPI() {
         )
     }
 
-    private suspend fun fetchAllStreams(): List<Pair<Stream, String>> {
+    private suspend fun fetchAllStreams(): List<Pair<PpvStream, String>> {
         return try {
-            // Pre-fetch main site for potential DDoS cookies
+            // Pre-fetch main site for potential DDoS/WAF cookies
             try {
                 app.get(webUrl, headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
-                ))
+                ), timeout = 10000)
             } catch (e: Exception) {
-                Log.d("PpvTo", "Main site fetch failed (non-critical): ${e.message}")
+                Log.d("PpvTo", "Main site fetch skipped: ${e.message}")
             }
 
-            val headers = getApiHeaders()
-            Log.d("PpvTo", "Fetching API: $apiUrl")
-
-            val response = app.get(apiUrl, headers = headers)
-            Log.d("PpvTo", "API response code: ${response.code}")
-            Log.d("PpvTo", "API response length: ${response.text.length}")
-
+            val response = app.get(apiUrl, headers = getApiHeaders(), timeout = 15000)
+            Log.d("PpvTo", "API Status: ${response.code}")
+            
             if (response.code != 200) {
-                Log.e("PpvTo", "API returned non-200: ${response.code}")
+                Log.e("PpvTo", "API failed with code: ${response.code}")
                 return emptyList()
             }
 
-            val text = response.text
-            if (text.isBlank()) {
+            val rawJson = response.text.trim()
+            if (rawJson.isBlank()) {
                 Log.e("PpvTo", "API returned empty body")
                 return emptyList()
             }
 
-            Log.d("PpvTo", "API response preview: ${text.take(500)}")
+            Log.d("PpvTo", "RAW JSON PREVIEW: ${rawJson.take(300)}...")
 
             val mapper = jacksonObjectMapper().registerKotlinModule()
-            val apiResponse: ApiResponse = mapper.readValue(text)
+            val root = mapper.readTree(rawJson)
+            
+            // Handle both flat and nested structures
+            val streamsNode = root.get("streams") ?: root.get("data") ?: root.get("results")
+            if (streamsNode == null || streamsNode.isNull) {
+                Log.e("PpvTo", "No 'streams'/'data'/'results' key found in JSON")
+                return emptyList()
+            }
 
-            Log.d("PpvTo", "API success: ${apiResponse.success}")
-            Log.d("PpvTo", "Categories count: ${apiResponse.categories?.size ?: 0}")
+            val result = mutableListOf<Pair<PpvStream, String>>()
 
-            val result = mutableListOf<Pair<Stream, String>>()
-            apiResponse.categories?.forEach { category ->
-                val catName = category.category ?: "Unknown"
-                val streams = category.streams ?: emptyList()
-                Log.d("PpvTo", "Category '$catName' has ${streams.size} streams")
-                streams.forEach { stream ->
-                    result.add(Pair(stream, catName))
+            if (streamsNode.isArray) {
+                // Flat array of streams
+                for (node in streamsNode) {
+                    val stream = mapper.treeToValue(node, PpvStream::class.java)
+                    val category = stream.categoryName ?: "Uncategorized"
+                    result.add(Pair(stream, category))
+                }
+            } else if (streamsNode.isObject) {
+                // Nested: { "categoryName": [ streams ] }
+                streamsNode.fields().forEach { (catName, catArray) ->
+                    if (catArray.isArray) {
+                        for (node in catArray) {
+                            val stream = mapper.treeToValue(node, PpvStream::class.java)
+                            result.add(Pair(stream, catName))
+                        }
+                    }
                 }
             }
 
-            Log.d("PpvTo", "Total streams fetched: ${result.size}")
+            Log.d("PpvTo", "Successfully parsed ${result.size} streams")
             result
         } catch (e: Exception) {
-            Log.e("PpvTo", "fetchAllStreams error: ${e.message}")
+            Log.e("PpvTo", "fetchAllStreams crashed: ${e.message}")
             Log.e("PpvTo", "Stack: ${e.stackTraceToString()}")
             emptyList()
         }
@@ -157,18 +139,11 @@ class PpvTo : MainAPI() {
 
     private fun buildPosterUrl(poster: String?): String? {
         if (poster.isNullOrEmpty()) return null
-        return if (poster.startsWith("http")) {
-            poster
-        } else {
-            "$mainUrl$poster"
-        }
+        return if (poster.startsWith("http")) poster else "$mainUrl$poster"
     }
 
     private fun formatTimeDescription(startsAt: Long?, endsAt: Long?, alwaysLive: Int?): String {
-        if (alwaysLive == 1) {
-            return "\uD83D\uDD34 Live 24/7 Stream"
-        }
-
+        if (alwaysLive == 1) return "🔴 Live 24/7 Stream"
         val currentTime = System.currentTimeMillis() / 1000
         val start = startsAt ?: return "Stream time unknown"
         val end = endsAt ?: 0
@@ -184,100 +159,80 @@ class PpvTo : MainAPI() {
                     else -> "Starts in ${minutes}m"
                 }
             }
-            currentTime in start..end -> "\uD83D\uDD34 LIVE NOW"
+            currentTime in start..end -> "🔴 LIVE NOW"
             else -> "Stream ended"
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        Log.d("PpvTo", "getMainPage called: ${request.name} / ${request.data}")
+        Log.d("PpvTo", "Loading page: ${request.name} (${request.data})")
         val allStreams = fetchAllStreams()
-        val categoryFilter = request.data
-
-        val filtered = if (categoryFilter == "all") {
+        
+        val filtered = if (request.data == "all") {
             allStreams
         } else {
-            allStreams.filter { it.second.equals(categoryFilter, ignoreCase = true) }
+            allStreams.filter { it.second.equals(request.data, ignoreCase = true) }
         }
-
-        Log.d("PpvTo", "Filtered streams for '${request.name}': ${filtered.size}")
 
         val items = filtered.mapNotNull { (stream, _) ->
             val name = stream.name ?: return@mapNotNull null
             val id = stream.id ?: return@mapNotNull null
             val href = "$webUrl/stream/$id"
-            val posterUrl = buildPosterUrl(stream.poster)
-
+            
             newLiveSearchResponse(name, href, TvType.Live) {
-                this.posterUrl = posterUrl
+                this.posterUrl = buildPosterUrl(stream.poster)
                 this.posterHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
             }
         }
 
-        Log.d("PpvTo", "HomePage items created: ${items.size}")
-
+        Log.d("PpvTo", "HomePageList contains ${items.size} items")
+        
+        // Cloudstream expects List<HomePageList>
         return newHomePageResponse(
-            list = HomePageList(
-                request.name,
-                list = items,
-                isHorizontalImages = true
-            ),
+            list = listOf(HomePageList(request.name, items, isHorizontalImages = true)),
             hasNext = false
         )
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d("PpvTo", "search called: $query")
         val allStreams = fetchAllStreams()
         val q = query.lowercase().trim()
 
-        val filtered = allStreams.filter { (stream, _) ->
-            val nameMatch = stream.name?.lowercase()?.contains(q) == true
-            val tagMatch = stream.tag?.lowercase()?.contains(q) == true
-            val sourceTagMatch = stream.sourceTag?.lowercase()?.contains(q) == true
-            val categoryMatch = stream.categoryName?.lowercase()?.contains(q) == true
-            nameMatch || tagMatch || sourceTagMatch || categoryMatch
-        }
-
-        return filtered.mapNotNull { (stream, _) ->
+        return allStreams.filter { (stream, _) ->
+            stream.name?.lowercase()?.contains(q) == true ||
+            stream.tag?.lowercase()?.contains(q) == true ||
+            stream.sourceTag?.lowercase()?.contains(q) == true ||
+            stream.categoryName?.lowercase()?.contains(q) == true
+        }.mapNotNull { (stream, _) ->
             val name = stream.name ?: return@mapNotNull null
             val id = stream.id ?: return@mapNotNull null
             val href = "$webUrl/stream/$id"
-            val posterUrl = buildPosterUrl(stream.poster)
-
+            
             newLiveSearchResponse(name, href, TvType.Live) {
-                this.posterUrl = posterUrl
+                this.posterUrl = buildPosterUrl(stream.poster)
                 this.posterHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
             }
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse> {
-        return search(query)
-    }
+    override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("PpvTo", "load called: $url")
         val streamId = url.substringAfterLast("/").toIntOrNull() ?: return null
         val allStreams = fetchAllStreams()
-
         val (stream, categoryName) = allStreams.find { it.first.id == streamId } ?: return null
+        
         val title = stream.name ?: "Unknown Stream"
-        val posterUrl = buildPosterUrl(stream.poster)
         val timeDesc = formatTimeDescription(stream.startsAt, stream.endsAt, stream.alwaysLive)
         val viewers = stream.viewers?.toIntOrNull() ?: 0
-        val viewerText = if (viewers > 0) "\n\nViewers: $viewers" else ""
-        val tag = stream.tag ?: stream.sourceTag ?: ""
-        val tagText = if (tag.isNotEmpty()) "\nSource: $tag" else ""
-
-        val description = "$timeDesc$tagText$viewerText"
-        val tags = listOfNotNull(categoryName, stream.tag, stream.sourceTag).distinct()
-
+        val viewerText = if (viewers > 0) "\n\n👥 Viewers: $viewers" else ""
+        val tagText = if (!stream.tag.isNullOrBlank()) "\n🏷️ Source: ${stream.tag}" else ""
+        
         return newMovieLoadResponse(title, url, TvType.Live, url) {
-            this.posterUrl = posterUrl
+            this.posterUrl = buildPosterUrl(stream.poster)
             this.posterHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
-            this.plot = description
-            this.tags = tags
+            this.plot = "$timeDesc$tagText$viewerText"
+            this.tags = listOfNotNull(categoryName, stream.tag, stream.sourceTag).distinct()
         }
     }
 
@@ -287,34 +242,19 @@ class PpvTo : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        Log.d("PpvTo", "loadLinks called: $data")
         val streamId = data.substringAfterLast("/").toIntOrNull() ?: return@withContext false
         val allStreams = fetchAllStreams()
         val (stream, _) = allStreams.find { it.first.id == streamId } ?: return@withContext false
 
-        val iframeUrl = stream.iframe
-        Log.d("PpvTo", "iframeUrl: $iframeUrl")
-
-        if (!iframeUrl.isNullOrEmpty()) {
-            loadExtractor(
-                url = iframeUrl,
-                referer = webUrl,
-                subtitleCallback = subtitleCallback,
-                callback = callback
-            )
+        fun processIframe(iframe: String?) {
+            if (!iframe.isNullOrBlank()) {
+                loadExtractor(url = iframe, referer = webUrl, subtitleCallback = subtitleCallback, callback = callback)
+            }
         }
 
-        stream.substreams?.forEach { substream ->
-            val subIframe = substream.iframe
-            if (!subIframe.isNullOrEmpty()) {
-                Log.d("PpvTo", "substream iframe: $subIframe")
-                loadExtractor(
-                    url = subIframe,
-                    referer = webUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = callback
-                )
-            }
+        processIframe(stream.iframe)
+        stream.substreams?.forEach { sub ->
+            processIframe(sub["iframe"] as? String)
         }
 
         return@withContext true
