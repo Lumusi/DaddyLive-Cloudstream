@@ -82,8 +82,6 @@ android {
                 )
             }
         }
-    }
-
 
     dependencies {
         val cloudstream by configurations
