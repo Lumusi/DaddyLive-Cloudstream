@@ -515,8 +515,9 @@ class CDNLiveTV : MainAPI() {
         }
 
         return coroutineScope {
-            val deferredJobs = matches.map { ch ->
-                val sourceUrl = buildPlayerUrl(ch.name ?: return@map null, ch.code ?: "us")
+            val deferredJobs = matches.mapNotNull { ch ->
+                val chName = ch.name ?: return@mapNotNull null
+                val sourceUrl = buildPlayerUrl(chName, ch.code ?: "us")
                 async {
                     try {
                         val sourceLabel = codeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
