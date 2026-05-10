@@ -470,7 +470,7 @@ class CDNLiveTV : MainAPI() {
         val channels = event.channels?.filter { it?.url?.isNotBlank() == true } ?: return false
  
         return coroutineScope {
-
+            val deferredJobs = channels.mapNotNull { eventChannel ->
                 val sourceUrl = eventChannel.url ?: return@mapNotNull null
                 async {
                     try {
