@@ -6,18 +6,15 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * PPV.to - Sports streaming portal
  * 
  * API: https://api.ppv.st/api/streams
- * Returns: JSON with categories and streams containing iframe embeds
+ * Embed: https://pooembed.eu/embed/{sport}/{date}/{match}
  * 
- * Embed player: https://pooembed.eu/embed/{sport}/{date}/{match}
- * 
- * Note: Site may be blocked in some regions (Virgin Media court order in UK)
+ * Uses loadExtractor() for WebView-based stream extraction from
+ * the adware-heavy embed player page.
  */
 class PPVTO : MainAPI() {
     override var mainUrl = "https://ppv.to"
@@ -51,13 +48,13 @@ class PPVTO : MainAPI() {
                 .readValue<StreamsResponse>(response)
             
             val items = mutableListOf<HomePageItem>()
-            apiResponse.streams.forEach { category ->
+            apiResponse.output?.forEach { category ->
                 category.streams.forEach { stream ->
                     items.add(HomePageItem(
                         title = stream.name ?: continue,
                         synopsis = "${stream.category_name} • ${stream.tag ?: ""}",
                         poster = stream.poster ?: "",
-                        url = "${EMBED_URL}/${stream.uri_name}",
+                        url = "$EMBED_URL/${stream.uri_name}",
                         id = stream.id.toString()
                     ))
                 }
@@ -78,7 +75,7 @@ class PPVTO : MainAPI() {
             val results = mutableListOf<SearchResponse>()
             val queryLower = query.lowercase()
             
-            apiResponse.streams.forEach { category ->
+            apiResponse.output?.forEach { category ->
                 category.streams.forEach { stream ->
                     if (stream.name?.lowercase()?.contains(queryLower) == true ||
                         stream.category_name?.lowercase()?.contains(queryLower) == true) {
@@ -88,7 +85,7 @@ class PPVTO : MainAPI() {
                             title = stream.name ?: continue,
                             description = "${stream.category_name} • ${stream.tag ?: ""}",
                             poster = stream.poster ?: "",
-                            url = "${EMBED_URL}/${stream.uri_name}"
+                            url = "$EMBED_URL/${stream.uri_name}"
                         ))
                     }
                 }
@@ -103,16 +100,14 @@ class PPVTO : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val uriName = url.substringAfter("$EMBED_URL/")
-        val parts = uriName.split("/")
         
         return try {
             val response = app.get(API_URL, headers = headers)
             val apiResponse = jacksonObjectMapper().registerKotlinModule()
                 .readValue<StreamsResponse>(response)
             
-            val stream = apiResponse.streams
-                .flatMap { it.streams }
-                .find { it.uri_name == uriName }
+            val stream = apiResponse.output?.flatMap { it.streams }
+                ?.find { it.uri_name == uriName }
             
             stream?.let {
                 LoadResponse(
@@ -136,20 +131,19 @@ class PPVTO : MainAPI() {
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Use WebView extraction for the embed page
-            val iframeUrl = data
-            
+    ): Boolean {
+        return try {
+            // Use loadExtractor for WebView-based extraction
+            // Handles the adware-heavy embed page (pooembed.eu)
             loadExtractor(
-                url = iframeUrl,
+                url = data,
                 referer = mainUrl,
                 subtitleCallback = subtitleCallback,
                 callback = callback
             )
-            return@withContext true
+            true
         } catch (e: Exception) {
-            return@withContext false
+            false
         }
     }
 }
@@ -165,7 +159,6 @@ data class StreamsResponse(
 data class CategoryData(
     @JsonProperty("category") val category: String? = null,
     @JsonProperty("id") val id: Int? = null,
-    @JsonProperty("always_live") val always_live: Boolean? = null,
     @JsonProperty("streams") val streams: List<StreamData> = emptyList()
 )
 
@@ -174,17 +167,9 @@ data class StreamData(
     @JsonProperty("id") val id: Int = 0,
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("tag") val tag: String? = null,
-    @JsonProperty("source_tag") val source_tag: String? = null,
     @JsonProperty("poster") val poster: String? = null,
-    @JsonProperty("blurhash") val blurhash: String? = null,
-    @JsonProperty("colors") val colors: List<String> = emptyList(),
     @JsonProperty("uri_name") val uri_name: String? = null,
-    @JsonProperty("starts_at") val starts_at: Long = 0,
-    @JsonProperty("ends_at") val ends_at: Long = 0,
     @JsonProperty("always_live") val always_live: Int = 0,
-    @JsonProperty("locale") val locale: String? = null,
     @JsonProperty("category_name") val category_name: String? = null,
-    @JsonProperty("iframe") val iframe: String? = null,
-    @JsonProperty("viewers") val viewers: String? = null,
-    @JsonProperty("substreams") val substreams: List<Any> = emptyList()
+    @JsonProperty("iframe") val iframe: String? = null
 )
