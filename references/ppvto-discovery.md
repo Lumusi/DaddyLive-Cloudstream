@@ -3,7 +3,7 @@
 ## Status
 - **Extension**: PPV.to (com.ppvto.api)
 - **API Domain**: api.ppv.st
-- **Status**: Working API discovered, embed extraction needs WebView
+- **Status**: Complete - uses loadExtractor() for WebView extraction
 
 ## API Endpoints
 
@@ -24,17 +24,13 @@ Headers:
     {
       "category": "Football",
       "id": 42,
-      "always_live": false,
       "streams": [
         {
           "id": 21301,
           "name": "Hamburg SV vs. SC Freiburg",
           "tag": "Bundesliga",
-          "source_tag": "ESPN+",
           "poster": "https://api.ppv.st/assets/thumb/...",
           "uri_name": "bundesliga/2026-05-10/hsv-scf",
-          "iframe": "https://pooembed.eu/embed/bundesliga/2026-05-10/hsv-scf",
-          "always_live": 0,
           "category_name": "Football"
         }
       ]
@@ -59,21 +55,33 @@ Headers:
 https://pooembed.eu/embed/{sport}/{date}/{match}
 ```
 
-## Implementation Notes
+## Implementation
 
-### Headers Required
-- User-Agent: Browser-like
-- Referer: https://ppv.to/
-- Origin: https://ppv.to
+### Extraction Method
+Uses `loadExtractor()` for WebView-based stream extraction. This is the standard Cloudstream3 pattern for:
+- Sites with Cloudflare protection
+- Obfuscated player pages
+- Adware-heavy embed pages (pooembed.eu)
 
-### Stream Extraction
-The embed page (pooembed.eu) uses heavy obfuscation with adware scripts.
-Use Cloudstream's `loadExtractor()` for WebView-based extraction.
+### Key Methods
+- `getMainPage()` - Fetches streams from API
+- `search()` - Filter by match/category
+- `load()` - Load stream metadata
+- `loadLinks()` - WebView extraction via loadExtractor()
+
+### Headers
+```kotlin
+val headers = mapOf(
+    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+    "Accept" to "application/json",
+    "Referer" to "https://ppv.to/"
+)
+```
 
 ### Regional Restrictions
 - PPV.to is blocked in UK due to Virgin Media court order
-- VPN required for UK users
 - Extension marked with `VPNStatus.MightBeNeeded`
+- Users need VPN for UK access
 
 ## File Structure
 ```
