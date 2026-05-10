@@ -44,11 +44,12 @@ class CDNLiveTV : MainAPI() {
     override val vpnStatus = VPNStatus.MightBeNeeded
 
     companion object {
+        // Headers for API requests - use cdnlivetv.tv for consistency
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
             "Accept" to "application/json, text/html, */*; q=0.01",
             "Accept-Language" to "en-US,en;q=0.5",
-            "Referer" to "https://streamsports99.ru/"
+            "Referer" to "https://cdnlivetv.tv/"
         )
         val posterHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",

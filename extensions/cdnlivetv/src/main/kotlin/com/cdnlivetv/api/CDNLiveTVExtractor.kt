@@ -33,17 +33,19 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
     private val appContext = context.applicationContext
 
     companion object {
+        // Headers for player page requests (cdnlivetv.tv domain)
         val refererHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language" to "en-US,en;q=0.5",
-            "Referer" to "https://streamchannels99.ru/"
+            "Referer" to "https://cdnlivetv.tv/"
         )
+        // Headers for API requests (should match player domain for consistency)
         val jsonHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
             "Accept" to "application/json, text/html, */*; q=0.01",
             "Accept-Language" to "en-US,en;q=0.5",
-            "Referer" to "https://streamsports99.ru/"
+            "Referer" to "https://cdnlivetv.tv/"
         )
     }
 
@@ -155,24 +157,30 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                                         """
                                         (function() {
                                             try {
-                                                // Method 1: Click OPlayer play button (CSS-based)
-                                                var playBtn = document.querySelector('[class*="o-player"] [class*="play"], .o-icon-play, [class*="oplayer"] [class*="btn"]');
-                                                if (playBtn) { playBtn.click(); return 'oplayer_clicked'; }
-
-                                                // Method 2: Try standard player APIs
+                                                // Multiple attempts to find and click play button
+                                                var playBtn = document.querySelector('[class*="o-player"] [class*="play" i]') ||
+                                                              document.querySelector('.o-icon-play') ||
+                                                              document.querySelector('[class*="oplayer"] [class*="btn" i]') ||
+                                                              document.querySelector('.player-play-btn') ||
+                                                              document.querySelector('[data-action="play"]') ||
+                                                              document.querySelector('button[aria-label*="play" i]');
+                                                if (playBtn) { playBtn.click(); }
+                                                
+                                                // Try standard player APIs
                                                 if (window.player && typeof window.player.play === 'function') {
                                                     window.player.play();
-                                                    return 'player_api';
                                                 }
-
-                                                // Method 3: Generic video element play
+                                                
+                                                // Try OPlayer global
+                                                if (window.OPlayer && typeof window.OPlayer.play === 'function') {
+                                                    window.OPlayer.play();
+                                                }
+                                                
+                                                // Generic video element play
                                                 var video = document.querySelector('video');
-                                                if (video) {
-                                                    video.play();
-                                                    return 'video_play';
-                                                }
-
-                                                return 'no_player_found';
+                                                if (video) { video.play(); }
+                                                
+                                                return 'play_attempted';
                                             } catch(e) {
                                                 return 'error: ' + e.message;
                                             }
