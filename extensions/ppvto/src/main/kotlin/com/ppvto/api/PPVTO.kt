@@ -1,5 +1,4 @@
 package com.ppvto
-
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -102,7 +101,7 @@ class PpvTo : MainAPI() {
 
     private suspend fun fetchAllStreams(): List<Pair<Stream, String>> {
         return try {
-            // First hit the main site to get any DDoS-Guard cookies
+            // Pre-fetch main site for potential DDoS cookies
             try {
                 app.get(webUrl, headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
@@ -129,7 +128,6 @@ class PpvTo : MainAPI() {
                 return emptyList()
             }
 
-            // Log first 500 chars for debugging
             Log.d("PpvTo", "API response preview: ${text.take(500)}")
 
             val mapper = jacksonObjectMapper().registerKotlinModule()
@@ -301,8 +299,8 @@ class PpvTo : MainAPI() {
             loadExtractor(
                 url = iframeUrl,
                 referer = webUrl,
-                subtitleCallback = { sub -> subtitleCallback.invoke(sub) },
-                callback = { link -> callback.invoke(link) }
+                subtitleCallback = subtitleCallback,
+                callback = callback
             )
         }
 
@@ -313,8 +311,8 @@ class PpvTo : MainAPI() {
                 loadExtractor(
                     url = subIframe,
                     referer = webUrl,
-                    subtitleCallback = { sub -> subtitleCallback.invoke(sub) },
-                    callback = { link -> callback.invoke(link) }
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
                 )
             }
         }
