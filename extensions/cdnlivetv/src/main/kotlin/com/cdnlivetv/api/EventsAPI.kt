@@ -7,9 +7,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * Data model for the CDNLiveTV events API.
  *
  * Endpoint example:
- *   https://api.cdnlivetv.tv/api/v1/events/sports/soccer/?user=cdnlivetv&plan=free
+ *   https://api.cdnlivetv.ru/api/v1/events/sports/soccer/?user=cdnlivetv&plan=free
  *
- * Note: Events API is on api.cdnlivetv.tv (not .ru which is the channels API)
+ * Note: Events API uses the same .ru domain as channels, under /events/sports/{sport}
  *
  * Response structure:
  * {

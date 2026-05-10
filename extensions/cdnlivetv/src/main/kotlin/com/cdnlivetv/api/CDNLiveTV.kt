@@ -267,8 +267,8 @@ class CDNLiveTV : MainAPI() {
 
     private suspend fun fetchEvents(sport: String): List<Event> {
         val mapper = jacksonObjectMapper().registerKotlinModule()
-        // Events API is on the .tv domain, not the .ru domain used for channels
-        val responseUrl = "https://api.cdnlivetv.tv/api/v1/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
+        // Events API uses the same .ru domain as channels, with /events/sports/{sport} path
+        val responseUrl = "${mainUrl}/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
         val text = app.get(responseUrl, headers = headers).text
 
         // Response structure: { "Soccer": [...events...], "total_events": 79, "cached": true }
