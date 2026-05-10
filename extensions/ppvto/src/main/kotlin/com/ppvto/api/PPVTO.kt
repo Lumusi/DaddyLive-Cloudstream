@@ -49,7 +49,7 @@ class PPVTO : MainAPI() {
             val textdoc = withContext(Dispatchers.IO) {
                 app.get(API_URL, headers = headers).text
             }
-            val apiResponse = mapper.readValue<StreamsResponse>(textdoc)
+            val apiResponse = mapper.readValue(textdoc, StreamsResponse::class.java)
             
             val items = mutableListOf<HomePageList>()
             val categoryItems = mutableListOf<LiveSearchResponse>()
@@ -87,7 +87,7 @@ class PPVTO : MainAPI() {
             val textdoc = withContext(Dispatchers.IO) {
                 app.get(API_URL, headers = headers).text
             }
-            val apiResponse = mapper.readValue<StreamsResponse>(textdoc)
+            val apiResponse = mapper.readValue(textdoc, StreamsResponse::class.java)
             
             val results = mutableListOf<SearchResponse>()
             val queryLower = query.lowercase()
@@ -123,15 +123,15 @@ class PPVTO : MainAPI() {
             val textdoc = withContext(Dispatchers.IO) {
                 app.get(API_URL, headers = headers).text
             }
-            val apiResponse = mapper.readValue<StreamsResponse>(textdoc)
+            val apiResponse = mapper.readValue(textdoc, StreamsResponse::class.java)
             
             val stream = apiResponse.streams?.flatMap { it.streams }
                 ?.find { it.uri_name == uriName }
             
             stream?.let {
                 newMovieLoadResponse(
-                    title = it.name ?: "Unknown",
-                    url = url,
+                    it.name ?: "Unknown",
+                    url,
                     TvType.Live,
                     url
                 ) {
@@ -150,9 +150,9 @@ class PPVTO : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // Use loadExtractor for WebView-based extraction
+        // Handles the adware-heavy embed page (pooembed.eu)
         return try {
-            // Use loadExtractor for WebView-based extraction
-            // Handles the adware-heavy embed page (pooembed.eu)
             loadExtractor(
                 url = data,
                 referer = "$mainUrl/",
