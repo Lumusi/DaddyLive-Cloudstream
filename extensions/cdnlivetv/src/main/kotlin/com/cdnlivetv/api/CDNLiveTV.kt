@@ -56,6 +56,7 @@ class CDNLiveTV : MainAPI() {
         )
 
         private const val CACHE_TTL_MS = 5 * 60 * 1000L
+        private const val EVENTS_BASE_URL = "https://api.cdnlivetv.tv/api/v1"
         @Volatile private var cachedChannels: List<ChannelData>? = null
         @Volatile private var cacheTimestamp: Long = 0
 
@@ -108,18 +109,18 @@ class CDNLiveTV : MainAPI() {
         "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=br" to "🇧🇷 Brazil",
         "${mainUrl}/channels/?user=cdnlive&plan=all" to "🔴 Live Now",
         // --- Sport Events ---
-        "${mainUrl}/events/soccer/" to "⚽ Soccer",
-        "${mainUrl}/events/basketball/" to "🏀 Basketball",
-        "${mainUrl}/events/tennis/" to "🎾 Tennis",
-        "${mainUrl}/events/hockey/" to "🏒 Hockey",
-        "${mainUrl}/events/motorsport/" to "🏎️ Motorsport",
-        "${mainUrl}/events/handball/" to "🤾 Handball",
-        "${mainUrl}/events/golf/" to "⛳ Golf",
-        "${mainUrl}/events/cricket/" to "🏏 Cricket",
-        "${mainUrl}/events/cycling/" to "🚴 Cycling",
-        "${mainUrl}/events/volleyball/" to "🏐 Volleyball",
-        "${mainUrl}/events/mma/" to "🥊 MMA",
-        "${mainUrl}/events/darts/" to "🎯 Darts",
+        "$EVENTS_BASE_URL/events/sports/soccer/" to "⚽ Soccer",
+        "$EVENTS_BASE_URL/events/sports/basketball/" to "🏀 Basketball",
+        "$EVENTS_BASE_URL/events/sports/tennis/" to "🎾 Tennis",
+        "$EVENTS_BASE_URL/events/sports/hockey/" to "🏒 Hockey",
+        "$EVENTS_BASE_URL/events/sports/motorsport/" to "🏎️ Motorsport",
+        "$EVENTS_BASE_URL/events/sports/handball/" to "🤾 Handball",
+        "$EVENTS_BASE_URL/events/sports/golf/" to "⛳ Golf",
+        "$EVENTS_BASE_URL/events/sports/cricket/" to "🏏 Cricket",
+        "$EVENTS_BASE_URL/events/sports/cycling/" to "🚴 Cycling",
+        "$EVENTS_BASE_URL/events/sports/volleyball/" to "🏐 Volleyball",
+        "$EVENTS_BASE_URL/events/sports/mma/" to "🥊 MMA",
+        "$EVENTS_BASE_URL/events/sports/darts/" to "🎯 Darts",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -267,18 +268,20 @@ class CDNLiveTV : MainAPI() {
 
     private suspend fun fetchEvents(sport: String): List<Event> {
         val mapper = jacksonObjectMapper().registerKotlinModule()
-        // Events API uses the same .ru domain as channels, with /events/sports/{sport} path
-        val responseUrl = "${mainUrl}/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
+        val responseUrl = "$EVENTS_BASE_URL/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
         val text = app.get(responseUrl, headers = headers).text
 
-        // Response structure: { "Soccer": [...events...], "total_events": 79, "cached": true }
-        // The sport-keyed array is dynamic, so we parse into a Map first
         val raw: Map<String, Any> = mapper.readValue(text)
-        val eventsKey = raw.keys.firstOrNull {
-            it !in setOf("total_events", "cached", "timestamp", "cdn-live-tv")
+        
+        // The response wraps events inside a "cdn-live-tv" key.
+        // We extract that inner map, then find the sport-keyed list.
+        val cdnData = raw["cdn-live-tv"] as? Map<String, Any> ?: return emptyList()
+        
+        val eventsKey = cdnData.keys.firstOrNull {
+            it !in setOf("total_events", "cached", "timestamp")
         } ?: return emptyList()
 
-        val jsonArray = mapper.writeValueAsString(raw[eventsKey])
+        val jsonArray = mapper.writeValueAsString(cdnData[eventsKey])
         return mapper.readValue(jsonArray)
     }
 
