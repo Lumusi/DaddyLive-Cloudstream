@@ -1,18 +1,10 @@
-plugins {
-    id("com.android.library")
-    id("org.jetbrains.kotlin.android")
-}
+version = 1
 
-android {
-    namespace = "com.ppvto.api"
-    compileSdk = 36
-
-    defaultConfig {
-        minSdk = 21
-        targetSdk = 36
-    }
-}
-
-dependencies {
-    implementation("com.lagradost:cloudstream3:pre-release")
+cloudstream {
+    authors     = listOf("hermes")
+    language    = "en"
+    description = "Watch live sports streams from ppv.to"
+    status      = 1
+    tvTypes     = listOf("Live")
+    iconUrl     = "https://ppv.to/favicon.ico"
 }
