@@ -61,7 +61,7 @@ class PPVTO : MainAPI() {
                     categoryItems.add(
                         newLiveSearchResponse(title, url, TvType.Live) {
                             posterUrl = stream.poster
-                            description = "${stream.category_name} • ${stream.tag ?: ""}"
+                            plot = "${stream.category_name} • ${stream.tag ?: ""}"
                         }
                     )
                 }
@@ -101,7 +101,7 @@ class PPVTO : MainAPI() {
                         results.add(
                             newLiveSearchResponse(name, url, TvType.Live) {
                                 posterUrl = stream.poster
-                                description = "${stream.category_name} • ${stream.tag ?: ""}"
+                                plot = "${stream.category_name} • ${stream.tag ?: ""}"
                             }
                         )
                     }
@@ -136,7 +136,7 @@ class PPVTO : MainAPI() {
                     url
                 ) {
                     posterUrl = it.poster
-                    description = it.category_name
+                    plot = it.category_name
                 }
             }
         } catch (e: Exception) {
