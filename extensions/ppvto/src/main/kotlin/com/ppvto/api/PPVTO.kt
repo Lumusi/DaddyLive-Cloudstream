@@ -194,32 +194,50 @@ class PpvTo : MainAPI() {
         val allStreams = fetchAllStreams()
         val categoryFilter = request.data
 
+        Log.d("PpvTo", "Total streams fetched: ${allStreams.size}")
+        Log.d("PpvTo", "Category filter: '$categoryFilter'")
+
         val filtered = if (categoryFilter == "all") {
             allStreams
         } else {
-            allStreams.filter { it.second.equals(categoryFilter, ignoreCase = true) }
+            allStreams.filter { (stream, cat) ->
+                val match = cat.equals(categoryFilter, ignoreCase = true)
+                Log.d("PpvTo", "Checking category '$cat' against '$categoryFilter': $match")
+                match
+            }
         }
 
         Log.d("PpvTo", "Filtered streams for '${request.name}': ${filtered.size}")
 
-        val items = filtered.mapNotNull { (stream, _) ->
-            val name = stream.name ?: return@mapNotNull null
-            val id = stream.id ?: return@mapNotNull null
+        val items = filtered.mapNotNull { (stream, category) ->
+            val name = stream.name ?: run {
+                Log.w("PpvTo", "Stream has no name, skipping: id=${stream.id}")
+                return@mapNotNull null
+            }
+            val id = stream.id ?: run {
+                Log.w("PpvTo", "Stream has no id, skipping: name=$name")
+                return@mapNotNull null
+            }
             val href = "$webUrl/stream/$id"
             val posterUrl = buildPosterUrl(stream.poster)
 
+            Log.d("PpvTo", "Creating item: '$name' (id=$id, category=$category)")
+
             newLiveSearchResponse(name, href, TvType.Live) {
                 this.posterUrl = posterUrl
-                this.posterHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
             }
         }
 
         Log.d("PpvTo", "HomePage items created: ${items.size}")
 
+        if (items.isEmpty()) {
+            Log.w("PpvTo", "WARNING: No items created for category '${request.name}'. Check if category matching is working.")
+        }
+
         return newHomePageResponse(
             list = HomePageList(
-                request.name,
-                list = items,
+                name = request.name,
+                items = items,
                 isHorizontalImages = true
             ),
             hasNext = false
@@ -239,6 +257,8 @@ class PpvTo : MainAPI() {
             nameMatch || tagMatch || sourceTagMatch || categoryMatch
         }
 
+        Log.d("PpvTo", "Search results for '$query': ${filtered.size}")
+
         return filtered.mapNotNull { (stream, _) ->
             val name = stream.name ?: return@mapNotNull null
             val id = stream.id ?: return@mapNotNull null
@@ -247,7 +267,6 @@ class PpvTo : MainAPI() {
 
             newLiveSearchResponse(name, href, TvType.Live) {
                 this.posterUrl = posterUrl
-                this.posterHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
             }
         }
     }
@@ -275,7 +294,6 @@ class PpvTo : MainAPI() {
 
         return newMovieLoadResponse(title, url, TvType.Live, url) {
             this.posterUrl = posterUrl
-            this.posterHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
             this.plot = description
             this.tags = tags
         }
