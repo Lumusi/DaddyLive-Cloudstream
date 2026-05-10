@@ -55,17 +55,18 @@ subprojects {
         authors = listOf("d4d")
     }
 
-    android {
+android {
         namespace = "com.sportcdn"
+
+        compileSdk = 36
 
         defaultConfig {
             minSdk = 21
-            compileSdkVersion(36)
         }
-
         compileOptions {
             sourceCompatibility = JavaVersion.VERSION_1_8
             targetCompatibility = JavaVersion.VERSION_1_8
+        }
         }
 
         tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile> {

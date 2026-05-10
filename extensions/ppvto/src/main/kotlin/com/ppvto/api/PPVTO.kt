@@ -61,7 +61,6 @@ class PPVTO : MainAPI() {
                     categoryItems.add(
                         newLiveSearchResponse(title, url, TvType.Live) {
                             posterUrl = stream.poster
-                            plot = "${stream.category_name} • ${stream.tag ?: ""}"
                         }
                     )
                 }
@@ -97,11 +96,10 @@ class PPVTO : MainAPI() {
                     val name = stream.name ?: return@forEach
                     if (name.lowercase().contains(queryLower) ||
                         (stream.category_name?.lowercase()?.contains(queryLower) == true)) {
-                        val url = "$EMBED_URL/${stream.uri_name}"
+                        val url = "\$EMBED_URL/\${stream.uri_name}"
                         results.add(
                             newLiveSearchResponse(name, url, TvType.Live) {
                                 posterUrl = stream.poster
-                                plot = "${stream.category_name} • ${stream.tag ?: ""}"
                             }
                         )
                     }

@@ -122,10 +122,9 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
                             ): android.webkit.WebResourceResponse? {
                                 val reqUrl = request?.url?.toString() ?: return null
 
-                                // Capture HLS manifest URLs
                                 if (reqUrl.endsWith(".m3u8") && !captured.get()) {
                                     if (captured.compareAndSet(false, true)) {
-                                        cont.resume(reqUrl, onCancellation = null)
+                                        cont.resume(reqUrl)
                                         Handler(Looper.getMainLooper()).postDelayed({
                                             try { destroy() } catch (_: Exception) {}
                                         }, 500)
@@ -141,14 +140,14 @@ open class DaddyLiveExtractor(context: Context) : ExtractorApi() {
                     // Timeout after 15 seconds
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
-                            cont.resume(null, onCancellation = null)
+                            cont.resume(null)
                             try { webView.destroy() } catch (_: Exception) {}
                         }
                     }, 15000)
 
                 } catch (e: Exception) {
                     if (captured.compareAndSet(false, true)) {
-                        cont.resume(null, onCancellation = null)
+                        cont.resume(null)
                     }
                 }
 

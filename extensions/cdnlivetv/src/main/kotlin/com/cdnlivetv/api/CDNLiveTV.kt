@@ -483,15 +483,17 @@ class CDNLiveTV : MainAPI() {
                     referer = "https://cdnlivetv.tv/",
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
-                        callback(ExtractorLink(
-                            source = "${link.source} [$sourceLabel]",
-                            name = "${link.name} [$sourceLabel]",
-                            url = link.url,
-                            referer = link.referer,
-                            quality = link.quality,
-                            type = link.type,
-                            headers = link.headers
-                        ))
+                        callback(
+                            newExtractorLink(
+                                source = "${link.source} [$sourceLabel]",
+                                name = "${link.name} [$sourceLabel]",
+                                url = link.url,
+                                referer = link.referer,
+                                quality = link.quality,
+                                type = link.type,
+                                headers = link.headers
+                            )
+                        )
                     }
                 )
             } catch (_: Exception) {
@@ -547,15 +549,17 @@ class CDNLiveTV : MainAPI() {
                     referer = "https://cdnlivetv.tv/",
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
-                        callback(ExtractorLink(
-                            source = "${link.source} [$sourceLabel]",
-                            name = "${link.name} [$sourceLabel]",
-                            url = link.url,
-                            referer = link.referer,
-                            quality = link.quality,
-                            type = link.type,
-                            headers = link.headers
-                        ))
+                        callback(
+                            newExtractorLink(
+                                source = "${link.source} [$sourceLabel]",
+                                name = "${link.name} [$sourceLabel]",
+                                url = link.url,
+                                referer = link.referer,
+                                quality = link.quality,
+                                type = link.type,
+                                headers = link.headers
+                            )
+                        )
                     }
                 )
             } catch (_: Exception) {

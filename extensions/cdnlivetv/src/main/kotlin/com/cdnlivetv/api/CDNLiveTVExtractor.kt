@@ -129,8 +129,6 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                     webView = WebView(context).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
-                        settings.allowFileAccess = true
-                        settings.allowContentAccess = true
                         settings.mediaPlaybackRequiresUserGesture = false
                         settings.userAgentString =
                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0"
@@ -138,12 +136,9 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                         settings.setSupportZoom(false)
                         settings.loadWithOverviewMode = true
                         settings.blockNetworkImage = false
-                        settings.allowFileAccessFromFileURLs = true
-                        settings.allowUniversalAccessFromFileURLs = true
 
                         // Fire TV compatibility: Enable more permissive settings
                         settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                        settings.databaseEnabled = true
                         settings.setGeolocationEnabled(false)
 
                         webViewClient = object : WebViewClient() {
@@ -206,7 +201,7 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                                     (reqUrl.contains("/secure/api/v1/") && reqUrl.contains("playlist"))
                                 )) {
                                     if (captured.compareAndSet(false, true)) {
-                                        cont.resume(reqUrl, onCancellation = null)
+                                        cont.resume(reqUrl)
                                         Handler(Looper.getMainLooper()).postDelayed({
                                             try { destroy() } catch (_: Exception) {}
                                         }, 500)
@@ -232,14 +227,14 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                     // Fire TV hardware is slower and needs more time for Cloudflare + OPlayer
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
-                            cont.resume(null, onCancellation = null)
+                            cont.resume(null)
                             try { webView?.destroy() } catch (_: Exception) {}
                         }
                     }, 30000)
 
                 } catch (e: Exception) {
                     if (captured.compareAndSet(false, true)) {
-                        cont.resume(null, onCancellation = null)
+                        cont.resume(null)
                     }
                 }
 
