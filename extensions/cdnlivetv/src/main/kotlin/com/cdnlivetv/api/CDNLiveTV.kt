@@ -229,12 +229,12 @@ class CDNLiveTV : MainAPI() {
 
             val items = events.mapNotNull { event ->
                 val title = "${event.homeTeam ?: "?"} vs ${event.awayTeam ?: "?"}"
-                val playerUrl = event.channels?.firstOrNull()?.url
-                    ?: return@mapNotNull null
+                // Guard: skip events with no channel sources
+                if (event.channels?.firstOrNull()?.url.isNullOrBlank()) return@mapNotNull null
 
-                // Build a detail URL referencing the gameID for load()/loadLinks()
+                // Build a detail URL that encodes both sport and gameID
                 val gameID = event.gameID ?: return@mapNotNull null
-                val detailUrl = "https://cdnlivetv.tv/event/watch/$gameID"
+                val detailUrl = "https://cdnlivetv.tv/event/watch/$gameID?sport=$sport"
 
                 val statusIcon = when (event.status) {
                     "live" -> "🔴 LIVE"
@@ -257,7 +257,7 @@ class CDNLiveTV : MainAPI() {
             }
 
             newHomePageResponse(
-                list = HomePageList(label, items, isHorizontalImages = false),
+                list = listOf(HomePageList(label, items, isHorizontalImages = false)),
                 hasNext = false
             )
         } catch (e: Exception) {
@@ -267,7 +267,8 @@ class CDNLiveTV : MainAPI() {
 
     private suspend fun fetchEvents(sport: String): List<Event> {
         val mapper = jacksonObjectMapper().registerKotlinModule()
-        val responseUrl = "${mainUrl}/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
+        // Events API is on the .tv domain, not the .ru domain used for channels
+        val responseUrl = "https://api.cdnlivetv.tv/api/v1/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
         val text = app.get(responseUrl, headers = headers).text
 
         // Response structure: { "Soccer": [...events...], "total_events": 79, "cached": true }
@@ -308,7 +309,7 @@ class CDNLiveTV : MainAPI() {
     /**
      * Loads event or channel detail.
      *
-     * Event URLs (from catalog):  https://cdnlivetv.tv/event/watch/{gameID}
+     * Event URLs (from catalog):  https://cdnlivetv.tv/event/watch/{gameID}?sport={sport}
      * Channel URLs (from browse): cdnlivetv.tv/api/v1/channels/player/?name=...&code=...
      */
     override suspend fun load(url: String): LoadResponse? {
@@ -322,8 +323,9 @@ class CDNLiveTV : MainAPI() {
 
     private suspend fun loadEvent(url: String): LoadResponse? {
         return try {
-            val gameID = url.substringAfterLast("/")
-            val sport = url.substringBefore("/event/watch/").substringAfterLast("/events/")
+            val gameID = url.substringAfterLast("/").substringBefore("?")
+            val sport = url.substringAfter("sport=", "").substringBefore("&").takeIf { it.isNotBlank() }
+                ?: return null
 
             val events = fetchEvents(sport)
             val event = events.find { it.gameID == gameID } ?: return null
@@ -443,8 +445,9 @@ class CDNLiveTV : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val gameID = url.substringAfterLast("/")
-        val sport = url.substringBefore("/event/watch/").substringAfterLast("/events/")
+        val gameID = url.substringAfterLast("/").substringBefore("?")
+        val sport = url.substringAfter("sport=", "").substringBefore("&").takeIf { it.isNotBlank() }
+            ?: return false
 
         val events = fetchEvents(sport)
         val event = events.find { it.gameID == gameID } ?: return false

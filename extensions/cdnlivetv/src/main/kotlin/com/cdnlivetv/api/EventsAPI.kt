@@ -9,6 +9,8 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * Endpoint example:
  *   https://api.cdnlivetv.tv/api/v1/events/sports/soccer/?user=cdnlivetv&plan=free
  *
+ * Note: Events API is on api.cdnlivetv.tv (not .ru which is the channels API)
+ *
  * Response structure:
  * {
  *   "Soccer": [ { gameID, homeTeam, awayTeam, ..., channels: [...] }, ... ],
