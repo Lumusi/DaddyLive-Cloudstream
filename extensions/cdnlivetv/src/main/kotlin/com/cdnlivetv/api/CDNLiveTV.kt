@@ -58,6 +58,8 @@ class CDNLiveTV : MainAPI() {
         private const val CACHE_TTL_MS = 5 * 60 * 1000L
         private const val EVENTS_BASE_URL = "https://api.cdnlivetv.tv/api/v1"
         @Volatile private var cachedChannels: List<ChannelData>? = null
+        @Volatile private var cachedEvents: Map<String, List<Event>>? = null
+        @Volatile private var eventsCacheTimestamp: Long = 0
         @Volatile private var cacheTimestamp: Long = 0
 
         fun isCacheValid() = cachedChannels != null && (System.currentTimeMillis() - cacheTimestamp) < CACHE_TTL_MS
@@ -108,25 +110,25 @@ class CDNLiveTV : MainAPI() {
         "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=au" to "🇦🇺 Australia",
         "${mainUrl}/channels/?user=cdnlivetv&plan=free&code=br" to "🇧🇷 Brazil",
         "${mainUrl}/channels/?user=cdnlive&plan=all" to "🔴 Live Now",
-        // --- Sport Events ---
-        "$EVENTS_BASE_URL/events/sports/soccer/" to "⚽ Soccer",
-        "$EVENTS_BASE_URL/events/sports/basketball/" to "🏀 Basketball",
-        "$EVENTS_BASE_URL/events/sports/tennis/" to "🎾 Tennis",
-        "$EVENTS_BASE_URL/events/sports/hockey/" to "🏒 Hockey",
-        "$EVENTS_BASE_URL/events/sports/motorsport/" to "🏎️ Motorsport",
-        "$EVENTS_BASE_URL/events/sports/handball/" to "🤾 Handball",
-        "$EVENTS_BASE_URL/events/sports/golf/" to "⛳ Golf",
-        "$EVENTS_BASE_URL/events/sports/cricket/" to "🏏 Cricket",
-        "$EVENTS_BASE_URL/events/sports/cycling/" to "🚴 Cycling",
-        "$EVENTS_BASE_URL/events/sports/volleyball/" to "🏐 Volleyball",
-        "$EVENTS_BASE_URL/events/sports/mma/" to "🥊 MMA",
-        "$EVENTS_BASE_URL/events/sports/darts/" to "🎯 Darts",
+        // --- Sport Events (Custom routing identifiers) ---
+        "sport_soccer" to "⚽ Soccer",
+        "sport_basketball" to "🏀 Basketball",
+        "sport_tennis" to "🎾 Tennis",
+        "sport_hockey" to "🏒 Hockey",
+        "sport_motorsport" to "🏎️ Motorsport",
+        "sport_handball" to "🤾 Handball",
+        "sport_golf" to "⛳ Golf",
+        "sport_cricket" to "🏏 Cricket",
+        "sport_cycling" to "🚴 Cycling",
+        "sport_volleyball" to "🏐 Volleyball",
+        "sport_mma" to "🥊 MMA",
+        "sport_darts" to "🎯 Darts",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
             when {
-                request.data.contains("/events/sports/") || request.data.contains("/events/") -> getSportEvents(request.data)
+                request.data.startsWith("sport_") -> getSportEvents(request.data)
                 request.data.contains("plan=all") -> getLiveChannels()
                 request.data.contains("&code=") -> getChannelsByCountry(request.data)
                 request.data.contains("/channels/") -> getAllChannels(request.data)
@@ -213,30 +215,34 @@ class CDNLiveTV : MainAPI() {
      * Each event contains a channels[] array listing all broadcast sources
      * (typically from different countries), giving the user a source picker.
      */
-    private suspend fun getSportEvents(url: String): HomePageResponse {
-        // Extract sport slug from URL: .../events/soccer/  or  .../events/soccer
-        val sport = url.substringAfterLast("/events/").trimEnd('/')
-            .substringBefore("/").takeIf { it.isNotBlank() }
-            ?: return newHomePageResponse(list = mutableListOf(), hasNext = false)
-
-        val label = sportLabels[sport.lowercase()] ?: sport.replaceFirstChar { it.uppercase() }
+    private suspend fun getSportEvents(identifier: String): HomePageResponse {
+        val sportSlug = identifier.removePrefix("sport_").lowercase()
+        val label = sportLabels[sportSlug] ?: sportSlug.replaceFirstChar { it.uppercase() }
 
         return try {
-            val events = fetchEvents(sport)
+            val allEventsMap = fetchAllEvents()
+            val events = allEventsMap[sportLabels[sportSlug]?.removePrefix("") ?: sportSlug.replaceFirstChar { it.uppercase() }] 
+                ?: allEventsMap[sportSlug] 
+                ?: emptyList()
+
+            // If the above keys fail, try to find any key that matches the slug case-insensitively
+            val finalEvents = if (events.isEmpty()) {
+                allEventsMap.entries.firstOrNull { it.key.equals(sportSlug, ignoreCase = true) }?.value ?: emptyList()
+            } else events
+
+            val filteredEvents = finalEvents
                 .filter { it.channels?.isNotEmpty() == true }
                 .sortedWith(
                     compareByDescending<Event> { it.status == "live" }
                         .thenBy { it.start ?: "" }
                 )
 
-            val items = events.mapNotNull { event ->
+            val items = filteredEvents.mapNotNull { event ->
                 val title = "${event.homeTeam ?: "?"} vs ${event.awayTeam ?: "?"}"
-                // Guard: skip events with no channel sources
                 if (event.channels?.firstOrNull()?.url.isNullOrBlank()) return@mapNotNull null
 
-                // Build a detail URL that encodes both sport and gameID
                 val gameID = event.gameID ?: return@mapNotNull null
-                val detailUrl = "https://cdnlivetv.tv/event/watch/$gameID?sport=$sport"
+                val detailUrl = "https://cdnlivetv.tv/event/watch/$gameID?sport=$sportSlug"
 
                 val statusIcon = when (event.status) {
                     "live" -> "🔴 LIVE"
@@ -251,7 +257,6 @@ class CDNLiveTV : MainAPI() {
                     detailUrl,
                     TvType.Live
                 ) {
-                    // Use country flag as poster
                     this.posterUrl = event.countryIMG?.takeIf { it.isNotBlank() }
                     this.posterHeaders = posterHeaders
                 }
@@ -266,23 +271,29 @@ class CDNLiveTV : MainAPI() {
         }
     }
 
-    private suspend fun fetchEvents(sport: String): List<Event> {
+    private suspend fun fetchAllEvents(): Map<String, List<Event>> {
+        if (cachedEvents != null && (System.currentTimeMillis() - eventsCacheTimestamp) < CACHE_TTL_MS) {
+            return cachedEvents!!
+        }
         val mapper = jacksonObjectMapper().registerKotlinModule()
-        val responseUrl = "$EVENTS_BASE_URL/events/sports/${sport.lowercase()}/?user=cdnlivetv&plan=free"
+        val responseUrl = "$EVENTS_BASE_URL/events/sports/?user=cdnlivetv&plan=free"
         val text = app.get(responseUrl, headers = headers).text
 
         val raw: Map<String, Any> = mapper.readValue(text)
+        val cdnData = raw["cdn-live-tv"] as? Map<String, Any> ?: return emptyMap()
         
-        // The response wraps events inside a "cdn-live-tv" key.
-        // We extract that inner map, then find the sport-keyed list.
-        val cdnData = raw["cdn-live-tv"] as? Map<String, Any> ?: return emptyList()
+        val eventsMap = mutableMapOf<String, List<Event>>()
+        cdnData.forEach { (key, value) ->
+            if (key !in setOf("total_events", "cached", "timestamp") && value is List<*>) {
+                val jsonList = mapper.writeValueAsString(value)
+                val events: List<Event> = mapper.readValue(jsonList)
+                eventsMap[key] = events
+            }
+        }
         
-        val eventsKey = cdnData.keys.firstOrNull {
-            it !in setOf("total_events", "cached", "timestamp")
-        } ?: return emptyList()
-
-        val jsonArray = mapper.writeValueAsString(cdnData[eventsKey])
-        return mapper.readValue(jsonArray)
+        cachedEvents = eventsMap
+        eventsCacheTimestamp = System.currentTimeMillis()
+        return eventsMap
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -325,11 +336,15 @@ class CDNLiveTV : MainAPI() {
             val gameID = url.substringAfterLast("/").substringBefore("?")
             val sport = url.substringAfter("sport=", "").substringBefore("&").takeIf { it.isNotBlank() }
                 ?: return null
-
-            val events = fetchEvents(sport)
+ 
+            val events = fetchAllEvents()[sportLabels[sport.lowercase()] ?: sport.replaceFirstChar { it.uppercase() }]
+                ?: fetchAllEvents().entries.firstOrNull { it.key.equals(sport, ignoreCase = true) }?.value
+                ?: return null
+            
             val event = events.find { it.gameID == gameID } ?: return null
-
+ 
             val title = "${event.homeTeam ?: "?"} vs ${event.awayTeam ?: "?"}"
+
             val status = event.status ?: "unknown"
             val viewers = event.channels
                 ?.sumOf { it.viewers ?: 0 }
@@ -447,13 +462,15 @@ class CDNLiveTV : MainAPI() {
         val gameID = url.substringAfterLast("/").substringBefore("?")
         val sport = url.substringAfter("sport=", "").substringBefore("&").takeIf { it.isNotBlank() }
             ?: return false
-
-        val events = fetchEvents(sport)
+ 
+        val events = fetchAllEvents()[sportLabels[sport.lowercase()] ?: sport.replaceFirstChar { it.uppercase() }]
+            ?: fetchAllEvents().entries.firstOrNull { it.key.equals(sport, ignoreCase = true) }?.value
+            ?: return false
         val event = events.find { it.gameID == gameID } ?: return false
         val channels = event.channels?.filter { it?.url?.isNotBlank() == true } ?: return false
-
+ 
         return coroutineScope {
-            val deferredJobs = channels.mapNotNull { eventChannel ->
+
                 val sourceUrl = eventChannel.url ?: return@mapNotNull null
                 async {
                     try {
