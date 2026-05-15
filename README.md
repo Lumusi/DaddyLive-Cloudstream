@@ -1,29 +1,41 @@
-# CDNLiveTV Cloudstream Extension
+# CDNLiveTV & DamiTV Cloudstream Extensions
 
-Cloudstream3 extension for [cdnlivetv.tv](https://cdnlivetv.tv) — live sports from 762+ global channels across 38 countries.
+Multi-extension Cloudstream3 repository for live sports streaming.
 
-## Features
+## Extensions
 
-- **📺 All Channels** — Browse all 762+ channels sorted by country (US, UK, Spain, Germany, Australia, Brazil, +31 more)
-- **🔴 Live Now** — Channels that are currently online with active viewers
+| Extension | Package | Source | Type |
+|-----------|---------|--------|------|
+| **CDNLiveTV** | `com.cdnlivetv` | [cdnlivetv.tv](https://cdnlivetv.tv) | 762+ global channels, sport events |
+| **DamiTV** | `com.damitv` | [dami-tv.pro](https://dami-tv.pro) | NFL, NBA, Premier League, UFC, MLB, NHL + more |
+
+### CDNLiveTV
+
+- **📺 All Channels** — Browse 762+ channels sorted by country (US, UK, Spain, Germany, Australia, Brazil, +31 more)
+- **🔴 Live Now** — Channels currently online with active viewers
 - **⚽ Sport Events** — Live & upcoming events by sport (Soccer, Basketball, Tennis, Hockey, MMA, Cricket, Golf, Motorsport, Handball, Volleyball, Cycling, Darts)
+- **🌍 Multi-source** — Same channel/event from different country broadcasts
 - **🔍 Search** — Find channels by name across all countries
-- **🌍 Multi-source** — When available, see the same channel/event from different country broadcasts
+
+### DamiTV
+
+- **⚽ Football** — Premier League, La Liga, Bundesliga, Serie A, Champions League
+- **🏀 Basketball** — NBA, EuroLeague, international
+- **🏈 American Football** — NFL, college
+- **⚾ Baseball** — MLB
+- **🥊 MMA/Boxing** — UFC, boxing events
+- **🏏 Cricket** — International & league matches
+- **🏎️ Motor Sports** — F1, MotoGP, rally
+- **🏉 Rugby** — International, NRL, Super Rugby
+- **🔴 Live Now** — All currently live events in one view
+- **📅 All Events** — Browse all upcoming matches
 
 ## Install
 
 1. Install Cloudstream3 from [recloudstream.github.io](https://recloudstream.github.io/csdocs/)
 2. Settings → Extensions → Add Repository
-3. Enter: `https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/repo.json`
-4. Install the **CDNLiveTV** extension from the repository
-
-## How It Works
-
-The extension uses two API domains (unprotected JSON) and a player page (Cloudflare-protected):
-
-1. **Channel list** — `api.cdnlivetv.ru` returns channel metadata (name, country, status, viewers)
-2. **Sport events** — `api.cdnlivetv.tv` returns live/upcoming match listings with available broadcast sources
-3. **Player page** — `cdnlivetv.tv` hosts OPlayer-based streams, extracted via WebView for .m3u8 capture
+3. Enter: `https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/main/repo.json`
+4. Install the desired extension(s) from the repository
 
 ## Build
 
@@ -31,18 +43,35 @@ The extension uses two API domains (unprotected JSON) and a player page (Cloudfl
 ./gradlew make makePluginsJson
 ```
 
-Artifacts are in `extensions/cdnlivetv/build/` and auto-deployed via CI on push to `main`.
+Artifacts in each `extensions/*/build/` directory. CI auto-builds on push to `main`.
 
-## Architecture
+## Repository Structure
 
 ```
-extensions/cdnlivetv/
-├── build.gradle.kts              # Cloudstream extension metadata
-└── src/main/
-    ├── AndroidManifest.xml
-    └── kotlin/com/cdnlivetv/api/
-        ├── CDNLiveTVPlugin.kt    # @CloudstreamPlugin entry point
-        ├── CDNLiveTV.kt          # MainAPI — search, browse, load events/channels, link resolution
-        ├── CDNLiveTVExtractor.kt # ExtractorApi — WebView-based .m3u8 capture
-        └── EventsAPI.kt          # Data models for sport events
+extensions/
+├── cdnlivetv/           # CDNLiveTV extension
+│   ├── build.gradle.kts
+│   └── src/main/kotlin/com/cdnlivetv/api/
+│       ├── CDNLiveTVPlugin.kt
+│       ├── CDNLiveTV.kt          # MainAPI (search, browse, load, links)
+│       ├── CDNLiveTVExtractor.kt # ExtractorApi (WebView-based)
+│       └── EventsAPI.kt          # Event data models
+└── damitv/              # DamiTV extension
+    ├── build.gradle.kts
+    └── src/main/kotlin/com/damitv/api/
+        ├── DamiTVPlugin.kt
+        ├── DamiTV.kt             # MainAPI (search, browse, load, links)
+        └── Models.kt             # Match & stream data models
 ```
+
+## How CDNLiveTV Works
+
+1. **Channel list** — `api.cdnlivetv.ru` returns channel metadata (name, country, status, viewers)
+2. **Sport events** — `api.cdnlivetv.tv` returns live/upcoming match listings with broadcast sources
+3. **Player page** — `cdnlivetv.tv` hosts OPlayer-based streams, extracted via WebView (Cloudflare)
+
+## How DamiTV Works
+
+1. **Match data** — `90min.90minutes.xyz/matches` returns 100 upcoming/live matches
+2. **Stream resolution** — Tries multiple sources in order: HLS direct → FAWA → TFliX → generic
+3. **Playback** — All stream endpoints are same-origin, accessible via direct HTTP
