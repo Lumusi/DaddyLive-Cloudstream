@@ -12,12 +12,9 @@ import kotlinx.coroutines.withContext
 /**
  * DamiTV (dami-tv.pro) — Free live sports & 24/7 channel streaming.
  *
- * Data:  /papi/matches/all  →  full enriched match objects with embedUrl, sources, posters
- * HLS:   /live-hls/channel/{id}/playlist.m3u8  where id = "{sport}/{date}/{teams}"
- *        e.g. /live-hls/channel/nba/2026-05-15/det-cle/playlist.m3u8
- *        Segments use .png containers (masked video — VLC plays natively).
- * PPV:   /papi/stream/ppv/{id}  →  returns array of { embedUrl, language, hd, viewers }
- * FAWA:  /papi/fawa/stream/{id}  →  alternative source
+ * Data:  /papi/matches/all  →  full enriched match objects with embedUrl, posters
+ * Playback: embedUrl (pooembed.eu/embed/{matchId}) → WebView intercepts .m3u8 (DamiTVExtractor)
+ * Channels: /channels.json → cdn-stream/{name} direct M3U8
  */
 class DamiTV : MainAPI() {
     override var mainUrl = "https://dami-tv.pro"
@@ -343,7 +340,6 @@ class DamiTV : MainAPI() {
                 it.name.equals(channelName, ignoreCase = true) || it.id == channelName
             } ?: return false
 
-            // Use the defaultUrl (cdn-stream proxy) as M3U8
             val streamUrl = channel.defaultUrl ?: "$mainUrl/cdn-stream/${channel.name?.replace(" ", "%20") ?: return false}"
             try {
                 val wrapped = runBlocking {
@@ -355,11 +351,11 @@ class DamiTV : MainAPI() {
                     ) {
                         this.referer = "$mainUrl/"
                         this.quality = when (channel.defaultQuality) {
-                        "HD" -> 720
-                        "FHD" -> 1080
-                        "4K" -> 2160
-                        else -> Qualities.Unknown.value
-                    }
+                            "HD" -> 720
+                            "FHD" -> 1080
+                            "4K" -> 2160
+                            else -> Qualities.Unknown.value
+                        }
                         this.headers = mapOf(
                             "User-Agent" to headers["User-Agent"]!!,
                             "Referer" to mainUrl
@@ -374,113 +370,33 @@ class DamiTV : MainAPI() {
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
+        // Use the embed URL from /papi/matches/all (e.g. pooembed.eu/embed/{matchId})
+        // and intercept the HLS playlist via WebView (DamiTVExtractor).
         val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId } ?: return false
+        val embedUrl = match.embedUrl?.takeIf { it.isNotBlank() } ?: return false
 
-        var foundAny = false
-
-        // Source 1: Direct HLS stream (best quality)
-        // The match.id has format like "nba/2026-05-15/det-cle" which maps to:
-        //   /live-hls/channel/nba/2026-05-15/det-cle/playlist.m3u8
-        // The playlist uses .png segments (masked video — actual video data in
-        // .png containers, VLC plays natively). Also works for non-sports events.
-        val hlsUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
-        try {
-            val check = withContext(Dispatchers.IO) {
-                app.get(hlsUrl, headers = headers).text
-            }
-            if (check.isNotBlank() && check.contains("#EXT")) {
+        loadExtractor(
+            url = embedUrl,
+            subtitleCallback = subtitleCallback,
+            callback = { link ->
                 val wrapped = runBlocking {
                     newExtractorLink(
-                        source = name,
-                        name = "HD HLS",
-                        url = hlsUrl,
-                        type = ExtractorLinkType.M3U8
+                        source = "${link.source} [DamiTV]",
+                        name = "${link.name} [DamiTV]",
+                        url = link.url,
+                        type = link.type
                     ) {
-                        this.referer = "$mainUrl/"
-                        this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "User-Agent" to headers["User-Agent"]!!,
-                            "Referer" to mainUrl
-                        )
+                        this.referer = link.referer
+                        this.quality = link.quality
+                        this.headers = link.headers
                     }
                 }
                 callback(wrapped)
-                foundAny = true
             }
-        } catch (_: Exception) {}
-
-        // Source 2: PPV stream endpoint (resolves to embed URL on pooembed.eu)
-        if (match.sources?.isNotEmpty() == true) {
-            for (src in match.sources) {
-                try {
-                    val streamUrl = "$API/stream/${src.source}/${src.id}"
-                    val text = withContext(Dispatchers.IO) {
-                        app.get(streamUrl, headers = headers).text
-                    }
-                    val mapper = jacksonObjectMapper()
-                    val items: List<StreamItem> = mapper.readValue(text)
-                    for (item in items) {
-                        val embed = item.embedUrl ?: continue
-                        val label = item.language?.takeIf { it.isNotBlank() } ?: "PPV"
-                        val hd = if (item.hd == true) "HD" else ""
-                        val nameBase = buildString {
-                            append("PPV $label"); if (hd.isNotEmpty()) append(" $hd")
-                        }
-
-                        loadExtractor(
-                            url = embed,
-                            subtitleCallback = subtitleCallback,
-                            callback = { link ->
-                                val wrapped = runBlocking {
-                                    newExtractorLink(
-                                        source = "${link.source} [$nameBase]",
-                                        name = "${link.name} [$nameBase]",
-                                        url = link.url,
-                                        type = link.type
-                                    ) {
-                                        this.referer = link.referer
-                                        this.quality = link.quality
-                                        this.headers = link.headers
-                                    }
-                                }
-                                callback(wrapped)
-                            }
-                        )
-                        foundAny = true
-                    }
-                } catch (_: Exception) {}
-            }
-        }
-
-        // Source 3: Direct embedUrl (fallback — no sources array)
-        if (match.embedUrl?.isNotBlank() == true) {
-            try {
-                loadExtractor(
-                    url = match.embedUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = { link ->
-                        val wrapped = runBlocking {
-                            newExtractorLink(
-                                source = "${link.source} [Embed]",
-                                name = "${link.name} [Embed]",
-                                url = link.url,
-                                type = link.type
-                            ) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                                this.headers = link.headers
-                            }
-                        }
-                        callback(wrapped)
-                    }
-                )
-                foundAny = true
-            } catch (_: Exception) {}
-        }
-
-        return foundAny
+        )
+        return true
     }
 
     // ──────────────────────────────────────────────────────────────────────────
