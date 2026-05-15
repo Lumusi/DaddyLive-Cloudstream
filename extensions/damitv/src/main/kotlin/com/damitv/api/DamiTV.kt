@@ -354,10 +354,12 @@ class DamiTV : MainAPI() {
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$mainUrl/"
-                        this.quality = if (channel.defaultQuality == "HD") Qualities.HD1080.value
-                                       else if (channel.defaultQuality == "FHD") Qualities.FHD.value
-                                       else if (channel.defaultQuality == "4K") Qualities.UltraHD.value
-                                       else Qualities.Unknown.value
+                        this.quality = when (channel.defaultQuality) {
+                        "HD" -> 720
+                        "FHD" -> 1080
+                        "4K" -> 2160
+                        else -> Qualities.Unknown.value
+                    }
                         this.headers = mapOf(
                             "User-Agent" to headers["User-Agent"]!!,
                             "Referer" to mainUrl
