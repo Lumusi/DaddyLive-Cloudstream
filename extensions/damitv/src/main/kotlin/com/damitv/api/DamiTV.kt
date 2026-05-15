@@ -13,7 +13,9 @@ import kotlinx.coroutines.withContext
  * DamiTV (dami-tv.pro) — Free live sports & 24/7 channel streaming.
  *
  * Data:  /papi/matches/all  →  full enriched match objects with embedUrl, sources, posters
- * HLS:   /live-hls/channel/{id}/playlist.m3u8  →  direct HLS stream (works for live matches)
+ * HLS:   /live-hls/channel/{id}/playlist.m3u8  where id = "{sport}/{date}/{teams}"
+ *        e.g. /live-hls/channel/nba/2026-05-15/det-cle/playlist.m3u8
+ *        Segments use .png containers (masked video — VLC plays natively).
  * PPV:   /papi/stream/ppv/{id}  →  returns array of { embedUrl, language, hd, viewers }
  * FAWA:  /papi/fawa/stream/{id}  →  alternative source
  */
@@ -376,8 +378,11 @@ class DamiTV : MainAPI() {
 
         var foundAny = false
 
-        // Source 1: Direct HLS stream (best quality, ad-free)
-        // Constructed client-side: /live-hls/channel/{matchId}/playlist.m3u8
+        // Source 1: Direct HLS stream (best quality)
+        // The match.id has format like "nba/2026-05-15/det-cle" which maps to:
+        //   /live-hls/channel/nba/2026-05-15/det-cle/playlist.m3u8
+        // The playlist uses .png segments (masked video — actual video data in
+        // .png containers, VLC plays natively). Also works for non-sports events.
         val hlsUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
         try {
             val check = withContext(Dispatchers.IO) {
@@ -444,12 +449,11 @@ class DamiTV : MainAPI() {
                         foundAny = true
                     }
                 } catch (_: Exception) {}
-                if (foundAny) break
             }
         }
 
         // Source 3: Direct embedUrl (fallback — no sources array)
-        if (!foundAny && match.embedUrl?.isNotBlank() == true) {
+        if (match.embedUrl?.isNotBlank() == true) {
             try {
                 loadExtractor(
                     url = match.embedUrl,
