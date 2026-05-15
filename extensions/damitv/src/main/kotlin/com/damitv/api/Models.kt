@@ -18,6 +18,42 @@ data class ApiMatch(
     @JsonProperty("embedUrl") val embedUrl: String?
 )
 
+// ── Live TV Channels (from /channels.json) ────────────────────────────────────
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ApiChannelWrapper(
+    @JsonProperty("generated") val generated: String?,
+    @JsonProperty("total") val total: Int?,
+    @JsonProperty("channels") val channels: List<ApiChannel>?
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ApiChannel(
+    @JsonProperty("id") val id: String?,
+    @JsonProperty("name") val name: String?,
+    @JsonProperty("logo") val logo: String?,
+    @JsonProperty("country") val country: ChannelCountry?,
+    @JsonProperty("defaultUrl") val defaultUrl: String?,
+    @JsonProperty("defaultQuality") val defaultQuality: String?,
+    @JsonProperty("qualities") val qualities: List<ChannelQuality>?,
+    @JsonProperty("source") val source: String?,
+    @JsonProperty("status") val status: String?,
+    @JsonProperty("viewers") val viewers: Int?
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ChannelCountry(
+    @JsonProperty("code") val code: String?,
+    @JsonProperty("name") val name: String?,
+    @JsonProperty("flag") val flag: String?
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ChannelQuality(
+    @JsonProperty("quality") val quality: String?,
+    @JsonProperty("url") val url: String?
+)
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MatchTeams(
     @JsonProperty("home") val home: MatchTeam?,

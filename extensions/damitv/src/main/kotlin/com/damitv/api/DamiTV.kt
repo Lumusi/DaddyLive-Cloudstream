@@ -53,6 +53,12 @@ class DamiTV : MainAPI() {
 
         private fun cacheValid() =
             cachedMatches != null && (System.currentTimeMillis() - cacheTimestamp) < CACHE_TTL_MS
+
+        @Volatile private var cachedChannels: List<ApiChannel>? = null
+        @Volatile private var channelCacheTimestamp: Long = 0
+
+        private fun channelCacheValid() =
+            cachedChannels != null && (System.currentTimeMillis() - channelCacheTimestamp) < CACHE_TTL_MS
     }
 
     private val categoryIcons = mapOf(
@@ -64,14 +70,13 @@ class DamiTV : MainAPI() {
         "cricket" to "\uD83C\uDFCF",
         "motor-sports" to "\uD83C\uDFCE\uFE0F",
         "rugby" to "\uD83C\uDFC9",
-        "afl" to "\uD83C\uDFC9",
-        "24/7-streams" to "\uD83D\uDCFA"
+        "afl" to "\uD83C\uDFC9"
     )
 
     // Categories to surface on the main page
     private val homeCategories = listOf(
         "_live" to "\uD83D\uDD34 Live Now",
-        "24/7-streams" to "\uD83D\uDCFA 24/7 Channels",
+        "_livetv" to "\uD83D\uDCFA Live TV",
         "football" to "\u26BD Football",
         "basketball" to "\uD83C\uDFC0 Basketball",
         "american-football" to "\uD83C\uDFC8 American Football",
@@ -120,6 +125,7 @@ class DamiTV : MainAPI() {
         return try {
             when (request.data) {
                 "_live" -> buildLivePage()
+                "_livetv" -> buildLiveTVPage()
                 "_all" -> buildCategoryPage(null)
                 else -> buildCategoryPage(request.data)
             }
@@ -182,14 +188,60 @@ class DamiTV : MainAPI() {
         return newHomePageResponse(list = items, hasNext = false)
     }
 
+    // ── Live TV Channels ──────────────────────────────────────────────────────
+
+    private suspend fun fetchChannels(): List<ApiChannel> {
+        if (channelCacheValid()) return cachedChannels!!
+        val mapper = jacksonObjectMapper().registerKotlinModule()
+        val text = withContext(Dispatchers.IO) {
+            app.get("$mainUrl/channels.json", headers = headers).text
+        }
+        val wrapper: ApiChannelWrapper = mapper.readValue(text)
+        val channels = wrapper.channels ?: emptyList()
+        cachedChannels = channels
+        channelCacheTimestamp = System.currentTimeMillis()
+        return channels
+    }
+
+    private suspend fun buildLiveTVPage(): HomePageResponse {
+        val channels = fetchChannels()
+        // Group by country, sort by count descending
+        val grouped = channels.groupBy { it.country?.code ?: "intl" }
+            .mapValues { (_, chs) -> chs.sortedBy { it.name } }
+        val sorted = grouped.entries.sortedByDescending { (_, chs) -> chs.size }
+
+        val items = sorted.map { (code, chs) ->
+            val first = chs.first()
+            val flag = first.country?.flag ?: "\uD83C\uDF0D"
+            val name = first.country?.name ?: code.uppercase()
+            HomePageList(
+                "$flag $name (${chs.size})",
+                chs.mapNotNull { it.toChannelSearchResponse() },
+                isHorizontalImages = true
+            )
+        }
+        return newHomePageResponse(list = items, hasNext = false)
+    }
+
+    private fun ApiChannel.toChannelSearchResponse(): LiveSearchResponse? {
+        val channelId = id ?: name ?: return null
+        val detailUrl = "$mainUrl/channel/${name?.replace(" ", "%20")}"
+        return newLiveSearchResponse(name ?: "Channel", detailUrl, TvType.Live) {
+            this.posterUrl = logo
+            this.posterHeaders = posterHeaders
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Search
     // ──────────────────────────────────────────────────────────────────────────
 
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.lowercase().trim()
-        val matches = try { fetchAllMatches() } catch (_: Exception) { return emptyList() }
-        return matches
+        val matches = try { fetchAllMatches() } catch (_: Exception) { emptyList() }
+
+        // Search both matches and channels
+        val matchResults = matches
             .filter { m ->
                 (m.title?.lowercase()?.contains(q) == true) ||
                 (m.teams?.home?.name?.lowercase()?.contains(q) == true) ||
@@ -198,6 +250,13 @@ class DamiTV : MainAPI() {
                 (m.category?.lowercase()?.contains(q) == true)
             }
             .mapNotNull { it.toSearchResponse() }
+
+        val channels = try { fetchChannels() } catch (_: Exception) { emptyList() }
+        val channelResults = channels
+            .filter { it.name?.lowercase()?.contains(q) == true }
+            .mapNotNull { it.toChannelSearchResponse() }
+
+        return matchResults + channelResults
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
@@ -208,7 +267,35 @@ class DamiTV : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         return try {
-            // Extract full match ID after /event/ — IDs can contain slashes (e.g. "mlb/2026-05-15/phi-pit")
+            // ── Channel detail ────────────────────────────────────────────────
+            if (url.contains("$mainUrl/channel/")) {
+                val channelName = url.removePrefix("$mainUrl/channel/")
+                    .replace("%20", " ")
+                    .substringBefore("?").substringBefore("#")
+                val channels = fetchChannels()
+                val channel = channels.find {
+                    it.name.equals(channelName, ignoreCase = true) || it.id == channelName
+                } ?: return null
+
+                val flag = channel.country?.flag ?: ""
+                val countryName = channel.country?.name ?: channel.country?.code?.uppercase() ?: "Live TV"
+                val sourceName = channel.source ?: ""
+                val desc = buildString {
+                    appendLine("\uD83C\uDF0D Country: $flag $countryName")
+                    if (sourceName.isNotBlank()) appendLine("\uD83D\uDCCD Source: $sourceName")
+                    channel.defaultQuality?.let { appendLine("\uD83C\uDFA8 Quality: $it") }
+                    channel.viewers?.let { if (it > 0) appendLine("\uD83D\uDC65 Viewers: $it") }
+                }
+
+                return newMovieLoadResponse(channel.name ?: "Channel", url, TvType.Live, url) {
+                    this.posterUrl = channel.logo
+                    this.posterHeaders = posterHeaders
+                    this.plot = desc.trim()
+                    this.tags = listOfNotNull(countryName, sourceName, channel.defaultQuality)
+                }
+            }
+
+            // ── Event detail ──────────────────────────────────────────────────
             val matchId = url.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
             val matches = fetchAllMatches()
             val match = matches.find { it.id == matchId } ?: return null
@@ -244,7 +331,45 @@ class DamiTV : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Extract full match ID after /event/ — IDs can contain slashes (e.g. "mlb/2026-05-15/phi-pit")
+        // ── Channel stream ────────────────────────────────────────────────────
+        if (data.contains("$mainUrl/channel/")) {
+            val channelName = data.removePrefix("$mainUrl/channel/")
+                .replace("%20", " ")
+                .substringBefore("?").substringBefore("#")
+            val channels = try { fetchChannels() } catch (_: Exception) { return false }
+            val channel = channels.find {
+                it.name.equals(channelName, ignoreCase = true) || it.id == channelName
+            } ?: return false
+
+            // Use the defaultUrl (cdn-stream proxy) as M3U8
+            val streamUrl = channel.defaultUrl ?: "$mainUrl/cdn-stream/${channel.name?.replace(" ", "%20") ?: return false}"
+            try {
+                val wrapped = runBlocking {
+                    newExtractorLink(
+                        source = name,
+                        name = "${channel.defaultQuality ?: "SD"} ${channel.name ?: "Channel"}",
+                        url = streamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.quality = if (channel.defaultQuality == "HD") Qualities.HD1080.value
+                                       else if (channel.defaultQuality == "FHD") Qualities.FHD.value
+                                       else if (channel.defaultQuality == "4K") Qualities.UltraHD.value
+                                       else Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to headers["User-Agent"]!!,
+                            "Referer" to mainUrl
+                        )
+                    }
+                }
+                callback(wrapped)
+                return true
+            } catch (_: Exception) {
+                return false
+            }
+        }
+
+        // ── Event stream ──────────────────────────────────────────────────────
         val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId } ?: return false
