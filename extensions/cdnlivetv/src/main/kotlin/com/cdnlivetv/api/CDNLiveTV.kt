@@ -462,16 +462,16 @@ class CDNLiveTV : MainAPI() {
 
         val event = matchingSport.find { it.gameID == gameID } ?: return false
 
-        event.channels?.filter { it.channelName?.isNotBlank() == true }?.forEach { ch ->
+        val channels = event.channels?.filter { it.channelName?.isNotBlank() == true } ?: return false
+        for (ch in channels) {
             try {
-                val chName = ch.channelName ?: return@forEach
+                val chName = ch.channelName ?: continue
                 val chCode = ch.channelCode ?: "us"
                 val sourceLabel = buildSourceLabel(ch)
                 val sourceUrl = buildPlayerUrl(chName, chCode)
 
                 loadExtractor(
                     url = sourceUrl,
-                    referer = "https://cdnlivetv.tv/",
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
                         callback(
@@ -479,11 +479,12 @@ class CDNLiveTV : MainAPI() {
                                 source = "${link.source} [$sourceLabel]",
                                 name = "${link.name} [$sourceLabel]",
                                 url = link.url,
-                                referer = link.referer,
-                                quality = link.quality,
-                                type = link.type,
-                                headers = link.headers
-                            )
+                                type = link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
                         )
                     }
                 )
@@ -512,7 +513,6 @@ class CDNLiveTV : MainAPI() {
             return try {
                 loadExtractor(
                     url = data,
-                    referer = "https://cdnlivetv.tv/",
                     subtitleCallback = subtitleCallback,
                     callback = callback
                 )
@@ -522,16 +522,15 @@ class CDNLiveTV : MainAPI() {
             }
         }
 
-        matches.forEach { ch ->
+        for (ch in matches) {
             try {
-                val chName = ch.name ?: return@forEach
+                val chName = ch.name ?: continue
                 val chCode = ch.code ?: "us"
                 val sourceLabel = codeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
                 val sourceUrl = buildPlayerUrl(chName, chCode)
 
                 loadExtractor(
                     url = sourceUrl,
-                    referer = "https://cdnlivetv.tv/",
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
                         callback(
@@ -539,11 +538,12 @@ class CDNLiveTV : MainAPI() {
                                 source = "${link.source} [$sourceLabel]",
                                 name = "${link.name} [$sourceLabel]",
                                 url = link.url,
-                                referer = link.referer,
-                                quality = link.quality,
-                                type = link.type,
-                                headers = link.headers
-                            )
+                                type = link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
                         )
                     }
                 )
