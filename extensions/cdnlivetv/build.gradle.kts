@@ -8,3 +8,7 @@ cloudstream {
     tvTypes     = listOf("Live")
     iconUrl     = "https://cdnlivetv.tv/wp-content/uploads/2024/01/cropped-icon.png"
 }
+
+android {
+    namespace = "com.cdnlivetv"
+}

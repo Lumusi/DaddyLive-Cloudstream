@@ -50,8 +50,6 @@ subprojects {
     }
 
     android {
-        namespace = "com.sportcdn"
-
         compileSdk = 36
 
         defaultConfig {
