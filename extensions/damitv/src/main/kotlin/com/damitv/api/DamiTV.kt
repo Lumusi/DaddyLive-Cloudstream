@@ -36,6 +36,18 @@ class DamiTV : MainAPI() {
             "Referer" to "https://dami-tv.pro/"
         )
 
+        val posterHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Referer" to "https://dami-tv.pro/"
+        )
+
+        /** Resolve poster URL: relative paths use dami-tv.pro, absolute pass through. */
+        private fun resolvePoster(poster: String?): String? {
+            if (poster.isNullOrBlank()) return null
+            if (poster.startsWith("http")) return poster
+            return "https://dami-tv.pro$poster"
+        }
+
         @Volatile private var cachedMatches: List<ApiMatch>? = null
         @Volatile private var cacheTimestamp: Long = 0
 
@@ -211,7 +223,8 @@ class DamiTV : MainAPI() {
             }
 
             newMovieLoadResponse(title, url, TvType.Live, url) {
-                this.posterUrl = match.poster?.let { "https://streamed.pk$it" }
+                this.posterUrl = resolvePoster(match.poster)
+                this.posterHeaders = posterHeaders
                 this.plot = desc.trim()
                 this.tags = listOfNotNull(match.category, match.league, match.status)
             }
@@ -237,6 +250,7 @@ class DamiTV : MainAPI() {
         var foundAny = false
 
         // Source 1: Direct HLS stream (best quality, ad-free)
+        // Constructed client-side: /live-hls/channel/{matchId}/playlist.m3u8
         val hlsUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
         try {
             val check = withContext(Dispatchers.IO) {
@@ -263,8 +277,8 @@ class DamiTV : MainAPI() {
             }
         } catch (_: Exception) {}
 
-        // Source 2: PPV stream endpoint (resolves to embed URL)
-        if (!foundAny && match.sources?.isNotEmpty() == true) {
+        // Source 2: PPV stream endpoint (resolves to embed URL on pooembed.eu)
+        if (match.sources?.isNotEmpty() == true) {
             for (src in match.sources) {
                 try {
                     val streamUrl = "$API/stream/${src.source}/${src.id}"
@@ -277,25 +291,29 @@ class DamiTV : MainAPI() {
                         val embed = item.embedUrl ?: continue
                         val label = item.language?.takeIf { it.isNotBlank() } ?: "PPV"
                         val hd = if (item.hd == true) "HD" else ""
-                        val name = buildString { append("PPV $label"); if (hd.isNotEmpty()) append(" $hd") }
-
-                        // Use loadExtractor so the embed is parsed by Cloudstream
-                        val wrapped = runBlocking {
-                            newExtractorLink(
-                                source = name,
-                                name = name,
-                                url = embed,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-                                this.referer = "$mainUrl/"
-                                this.quality = Qualities.Unknown.value
-                                this.headers = mapOf(
-                                    "User-Agent" to headers["User-Agent"]!!,
-                                    "Referer" to mainUrl
-                                )
-                            }
+                        val nameBase = buildString {
+                            append("PPV $label"); if (hd.isNotEmpty()) append(" $hd")
                         }
-                        callback(wrapped)
+
+                        loadExtractor(
+                            url = embed,
+                            subtitleCallback = subtitleCallback,
+                            callback = { link ->
+                                val wrapped = runBlocking {
+                                    newExtractorLink(
+                                        source = "${link.source} [$nameBase]",
+                                        name = "${link.name} [$nameBase]",
+                                        url = link.url,
+                                        type = link.type
+                                    ) {
+                                        this.referer = link.referer
+                                        this.quality = link.quality
+                                        this.headers = link.headers
+                                    }
+                                }
+                                callback(wrapped)
+                            }
+                        )
                         foundAny = true
                     }
                 } catch (_: Exception) {}
@@ -303,25 +321,28 @@ class DamiTV : MainAPI() {
             }
         }
 
-        // Source 3: Direct embedUrl (if no sources array)
+        // Source 3: Direct embedUrl (fallback — no sources array)
         if (!foundAny && match.embedUrl?.isNotBlank() == true) {
             try {
-                val wrapped = runBlocking {
-                    newExtractorLink(
-                        source = name,
-                        name = "Embed",
-                        url = match.embedUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$mainUrl/"
-                        this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "User-Agent" to headers["User-Agent"]!!,
-                            "Referer" to mainUrl
-                        )
+                loadExtractor(
+                    url = match.embedUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = { link ->
+                        val wrapped = runBlocking {
+                            newExtractorLink(
+                                source = "${link.source} [Embed]",
+                                name = "${link.name} [Embed]",
+                                url = link.url,
+                                type = link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
+                        }
+                        callback(wrapped)
                     }
-                }
-                callback(wrapped)
+                )
                 foundAny = true
             } catch (_: Exception) {}
         }
@@ -335,13 +356,14 @@ class DamiTV : MainAPI() {
 
     private fun ApiMatch.toSearchResponse(): LiveSearchResponse? {
         val title = matchTitle(this)
-        val posterUrl = poster?.let { "https://streamed.pk$it" }
+        val posterUrl = resolvePoster(poster)
             ?: teams?.home?.badge?.takeIf { it.isNotBlank() }
         val detailUrl = "$mainUrl/event/${id ?: return null}"
 
         val displayTitle = if (isLive(this@toSearchResponse)) "$title \uD83D\uDD34" else title
         return newLiveSearchResponse(displayTitle, detailUrl, TvType.Live) {
             this.posterUrl = posterUrl
+            this.posterHeaders = posterHeaders
         }
     }
 }
