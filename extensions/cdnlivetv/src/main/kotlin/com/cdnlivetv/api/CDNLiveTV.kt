@@ -8,6 +8,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /**
@@ -474,7 +475,7 @@ class CDNLiveTV : MainAPI() {
                     url = sourceUrl,
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
-                        callback(
+                        val wrapped = runBlocking {
                             newExtractorLink(
                                 source = "${link.source} [$sourceLabel]",
                                 name = "${link.name} [$sourceLabel]",
@@ -485,7 +486,8 @@ class CDNLiveTV : MainAPI() {
                                 this.quality = link.quality
                                 this.headers = link.headers
                             }
-                        )
+                        }
+                        callback(wrapped)
                     }
                 )
             } catch (_: Exception) { /* skip failed source */ }
@@ -533,7 +535,7 @@ class CDNLiveTV : MainAPI() {
                     url = sourceUrl,
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
-                        callback(
+                        val wrapped = runBlocking {
                             newExtractorLink(
                                 source = "${link.source} [$sourceLabel]",
                                 name = "${link.name} [$sourceLabel]",
@@ -544,7 +546,8 @@ class CDNLiveTV : MainAPI() {
                                 this.quality = link.quality
                                 this.headers = link.headers
                             }
-                        )
+                        }
+                        callback(wrapped)
                     }
                 )
             } catch (_: Exception) { /* skip failed source */ }
