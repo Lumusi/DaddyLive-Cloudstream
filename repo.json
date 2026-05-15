@@ -1,7 +1,7 @@
 {
-  "iconUrl": "https://livetv.moviebite.cc/wp-content/uploads/2024/01/cropped-icon.png",
-  "name": "SportCDN",
-  "description": "Live sports streaming extensions (DaddyLive, SportsBite)",
+  "iconUrl": "https://cdnlivetv.tv/wp-content/uploads/2024/01/cropped-icon.png",
+  "name": "CDNLiveTV",
+  "description": "Live sports streaming extension for CDNLiveTV (cdnlivetv.tv) — 762+ global channels & live events",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/plugins.json"

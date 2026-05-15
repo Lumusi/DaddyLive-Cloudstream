@@ -56,27 +56,12 @@ jobs:
           done
           cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins.json
 
-      - name: Write repo.json to source
-        run: |
-          echo '{' > repo.json
-          echo '  "iconUrl": "https://livetv.moviebite.cc/wp-content/uploads/2024/01/cropped-icon.png",' >> repo.json
-          echo '  "name": "SportCDN",' >> repo.json
-          echo '  "description": "Live sports streaming extensions (DaddyLive, SportsBite)",' >> repo.json
-          echo '  "manifestVersion": 1,' >> repo.json
-          echo '  "pluginLists": [' >> repo.json
-          echo '    "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/plugins.json"' >> repo.json
-          echo '  ]' >> repo.json
-          echo '}' >> repo.json
-          cp repo.json $GITHUB_WORKSPACE/src/repo.json
-
       - name: Verify build artifacts
         run: |
           echo "=== plugins.json ==="
           cat $GITHUB_WORKSPACE/builds/plugins.json
           echo "=== .cs3 files ==="
           ls -la $GITHUB_WORKSPACE/builds/*.cs3 || { echo "ERROR: No .cs3 files found"; exit 1; }
-          echo "=== repo.json ==="
-          cat repo.json
 
       - name: Push builds branch
         run: |
@@ -86,12 +71,3 @@ jobs:
           git add .
           git commit --amend -m "Build $GITHUB_SHA" || exit 0
           git push --force
-
-      - name: Push repo.json to main
-        run: |
-          cd $GITHUB_WORKSPACE/src
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Actions"
-          git add repo.json
-          git commit -m "[skip ci] Update repo.json for Cloudstream3" || true
-          git push origin main || true

@@ -1,42 +1,29 @@
-# SportCDN-Cloudstream
+# CDNLiveTV Cloudstream Extension
 
-Multi-extension Cloudstream3 provider monorepo for live sports streaming.
+Cloudstream3 extension for [cdnlivetv.tv](https://cdnlivetv.tv) — live sports from 762+ global channels across 38 countries.
 
-## Extensions
+## Features
 
-| Extension | Package | Source |
-|-----------|---------|--------|
-| **DaddyLive** | `com.daddylive` | [daddylive.org](https://daddylive.org) |
-| **SportsBite** | `com.sportscdnext` | [livetv.moviebite.cc](https://livetv.moviebite.cc) |
+- **📺 All Channels** — Browse all 762+ channels sorted by country (US, UK, Spain, Germany, Australia, Brazil, +31 more)
+- **🔴 Live Now** — Channels that are currently online with active viewers
+- **⚽ Sport Events** — Live & upcoming events by sport (Soccer, Basketball, Tennis, Hockey, MMA, Cricket, Golf, Motorsport, Handball, Volleyball, Cycling, Darts)
+- **🔍 Search** — Find channels by name across all countries
+- **🌍 Multi-source** — When available, see the same channel/event from different country broadcasts
 
-## Structure
+## Install
 
-```
-extensions/
-├── daddylive/          # DaddyLive scraper (daddylive.org)
-│   ├── build.gradle.kts
-│   ├── src/main/
-│   │   ├── AndroidManifest.xml
-│   │   └── kotlin/com/daddylive/
-│   │       ├── DaddyLivePlugin.kt
-│   │       ├── DaddyLive.kt
-│   │       └── DaddyLiveExtractor.kt
-└── sportscdnext/       # SportsBite scraper (livetv.moviebite.cc)
-    ├── build.gradle.kts
-    ├── src/main/
-    │   ├── AndroidManifest.xml
-    │   └── kotlin/com/sportscdnext/
-    │       ├── SportsBitePlugin.kt
-    │       ├── SportsBite.kt
-    │       └── SportsBiteExtractor.kt
-```
+1. Install Cloudstream3 from [recloudstream.github.io](https://recloudstream.github.io/csdocs/)
+2. Settings → Extensions → Add Repository
+3. Enter: `https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/repo.json`
+4. Install the **CDNLiveTV** extension from the repository
 
-## Adding a New Extension
+## How It Works
 
-1. Create `extensions/<name>/` with `build.gradle.kts`, `AndroidManifest.xml`, and Kotlin sources
-2. Set `status = 1` in `cloudstream {}` block to enable (or `0` to disable without deleting)
-3. Run `./gradlew make makePluginsJson` — `settings.gradle.kts` auto-discovers new modules
-4. Commit and CI builds all enabled extensions automatically
+The extension uses two API domains (unprotected JSON) and a player page (Cloudflare-protected):
+
+1. **Channel list** — `api.cdnlivetv.ru` returns channel metadata (name, country, status, viewers)
+2. **Sport events** — `api.cdnlivetv.tv` returns live/upcoming match listings with available broadcast sources
+3. **Player page** — `cdnlivetv.tv` hosts OPlayer-based streams, extracted via WebView for .m3u8 capture
 
 ## Build
 
@@ -44,12 +31,18 @@ extensions/
 ./gradlew make makePluginsJson
 ```
 
-## Setup
+Artifacts are in `extensions/cdnlivetv/build/` and auto-deployed via CI on push to `main`.
 
-- `.cs3` artifacts are generated per extension in `extensions/*/build/`
-- `plugins.json` and `repo.json` are updated by CI on the `builds` branch
-- Import the repo URL in the Cloudstream3 app to install extensions
+## Architecture
 
-## License
-
-For personal use only. Respects the source websites' terms of service.
+```
+extensions/cdnlivetv/
+├── build.gradle.kts              # Cloudstream extension metadata
+└── src/main/
+    ├── AndroidManifest.xml
+    └── kotlin/com/cdnlivetv/api/
+        ├── CDNLiveTVPlugin.kt    # @CloudstreamPlugin entry point
+        ├── CDNLiveTV.kt          # MainAPI — search, browse, load events/channels, link resolution
+        ├── CDNLiveTVExtractor.kt # ExtractorApi — WebView-based .m3u8 capture
+        └── EventsAPI.kt          # Data models for sport events
+```
