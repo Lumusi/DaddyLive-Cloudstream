@@ -208,7 +208,8 @@ class DamiTV : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         return try {
-            val matchId = url.substringAfterLast("/").substringBefore("?")
+            // Extract full match ID after /event/ — IDs can contain slashes (e.g. "mlb/2026-05-15/phi-pit")
+            val matchId = url.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
             val matches = fetchAllMatches()
             val match = matches.find { it.id == matchId } ?: return null
 
@@ -243,7 +244,8 @@ class DamiTV : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val matchId = data.substringAfterLast("/").substringBefore("?")
+        // Extract full match ID after /event/ — IDs can contain slashes (e.g. "mlb/2026-05-15/phi-pit")
+        val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId } ?: return false
 
