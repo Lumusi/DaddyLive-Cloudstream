@@ -10,16 +10,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /**
- * DamiTV (dami-tv.pro) — Free live sports streaming.
+ * DamiTV (dami-tv.pro) — Free live sports & 24/7 channel streaming.
  *
- * Architecture:
- * - Match data: 90min.90minutes.xyz/matches (public JSON API, 100 matches)
- * - Stream sources tried in order:
- *     1. HLS Live:  dami-tv.pro/live-hls/channel/{id}/playlist.m3u8
- *     2. FAWA:      dami-tv.pro/papi/fawa/stream/{id}  →  { success, stream }
- *     3. TFliX:     dami-tv.pro/tflix/find?home=...&away=...
- *     4. Generic:   dami-tv.pro/papi/stream/{source}/{id}
- * - All stream endpoints are same-origin, accessible via direct HTTP
+ * Data:  /papi/matches/all  →  full enriched match objects with embedUrl, sources, posters
+ * HLS:   /live-hls/channel/{id}/playlist.m3u8  →  direct HLS stream (works for live matches)
+ * PPV:   /papi/stream/ppv/{id}  →  returns array of { embedUrl, language, hd, viewers }
+ * FAWA:  /papi/fawa/stream/{id}  →  alternative source
  */
 class DamiTV : MainAPI() {
     override var mainUrl = "https://dami-tv.pro"
@@ -31,7 +27,7 @@ class DamiTV : MainAPI() {
     override val vpnStatus = VPNStatus.MightBeNeeded
 
     private companion object {
-        const val MATCHES_API = "https://90min.90minutes.xyz/matches"
+        const val API = "https://dami-tv.pro/papi"
         const val CACHE_TTL_MS = 3 * 60 * 1000L
 
         val headers = mapOf(
@@ -40,71 +36,68 @@ class DamiTV : MainAPI() {
             "Referer" to "https://dami-tv.pro/"
         )
 
-        @Volatile private var cachedMatches: List<Match>? = null
+        @Volatile private var cachedMatches: List<ApiMatch>? = null
         @Volatile private var cacheTimestamp: Long = 0
 
         private fun cacheValid() =
             cachedMatches != null && (System.currentTimeMillis() - cacheTimestamp) < CACHE_TTL_MS
     }
 
-    /** Sport slug set for "featured" top-level categories in the app */
-    private val featuredSports = listOf(
-        "football", "basketball", "american-football", "baseball",
-        "fight", "cricket", "motor-sports", "rugby", "afl"
+    private val categoryIcons = mapOf(
+        "football" to "\u26BD",
+        "basketball" to "\uD83C\uDFC0",
+        "american-football" to "\uD83C\uDFC8",
+        "baseball" to "\u26BE",
+        "fight" to "\uD83E\uDD4A",
+        "cricket" to "\uD83C\uDFCF",
+        "motor-sports" to "\uD83C\uDFCE\uFE0F",
+        "rugby" to "\uD83C\uDFC9",
+        "afl" to "\uD83C\uDFC9",
+        "24/7-streams" to "\uD83D\uDCFA"
     )
 
-    /** Sport slug → display label */
-    private val sportLabels = mapOf(
-        "football" to "⚽ Football",
-        "basketball" to "🏀 Basketball",
-        "american-football" to "🏈 American Football",
-        "baseball" to "⚾ Baseball",
-        "fight" to "🥊 MMA/Boxing",
-        "cricket" to "🏏 Cricket",
-        "motor-sports" to "🏎️ Motor Sports",
-        "rugby" to "🏉 Rugby",
-        "afl" to "🏉 AFL",
-        "24/7-streams" to "📺 24/7 Streams",
-        "autoracing" to "🏎️ Auto Racing",
-        "tennis" to "🎾 Tennis",
-        "cycling" to "🚴 Cycling",
-        "darts" to "🎯 Darts",
-        "mma" to "🥊 MMA"
+    // Categories to surface on the main page
+    private val homeCategories = listOf(
+        "_live" to "\uD83D\uDD34 Live Now",
+        "24/7-streams" to "\uD83D\uDCFA 24/7 Channels",
+        "football" to "\u26BD Football",
+        "basketball" to "\uD83C\uDFC0 Basketball",
+        "american-football" to "\uD83C\uDFC8 American Football",
+        "baseball" to "\u26BE Baseball",
+        "fight" to "\uD83E\uDD4A MMA/Boxing",
+        "cricket" to "\uD83C\uDFCF Cricket",
+        "motor-sports" to "\uD83C\uDFCE\uFE0F Motor Sports",
+        "rugby" to "\uD83C\uDFC9 Rugby",
+        "afl" to "\uD83C\uDFC9 AFL",
     )
 
     override val mainPage = mainPageOf(
-        // Featured sports as main page categories
-        "cat_football" to "⚽ Football",
-        "cat_basketball" to "🏀 Basketball",
-        "cat_american-football" to "🏈 American Football",
-        "cat_baseball" to "⚾ Baseball",
-        "cat_fight" to "🥊 MMA/Boxing",
-        "cat_cricket" to "🏏 Cricket",
-        "cat_motor-sports" to "🏎️ Motor Sports",
-        "cat_rugby" to "🏉 Rugby",
-        "cat_afl" to "🏉 AFL",
-        "cat_24/7-streams" to "📺 24/7 Streams",
-        // Special: all live events
-        "_live" to "🔴 Live Now",
-        // Special: all matches sorted by time
-        "_all" to "📅 All Events",
+        homeCategories.map { it.first to it.second }
     )
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Data Fetching
+    // Data
     // ──────────────────────────────────────────────────────────────────────────
 
-    private suspend fun fetchAllMatches(): List<Match> {
+    private suspend fun fetchAllMatches(): List<ApiMatch> {
         if (cacheValid()) return cachedMatches!!
         val mapper = jacksonObjectMapper().registerKotlinModule()
         val text = withContext(Dispatchers.IO) {
-            app.get(MATCHES_API, headers = headers).text
+            app.get("$API/matches/all", headers = headers).text
         }
-        val response: MatchResponse = mapper.readValue(text)
-        val matches = response.matches ?: emptyList()
+        val matches: List<ApiMatch> = mapper.readValue(text)
         cachedMatches = matches
         cacheTimestamp = System.currentTimeMillis()
         return matches
+    }
+
+    private fun isLive(m: ApiMatch): Boolean =
+        m.status == "live" || (m.date != null && m.date <= System.currentTimeMillis())
+
+    private fun matchTitle(m: ApiMatch): String {
+        return m.title ?: if (m.teams?.home?.name != null || m.teams?.away?.name != null) {
+            "${m.teams.home?.name ?: "?"} vs ${m.teams.away?.name ?: "?"}"
+        } else m.league ?: m.category ?: "Unknown"
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -113,71 +106,67 @@ class DamiTV : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
-            when {
-                request.data == "_live" -> getLiveEvents()
-                request.data == "_all" -> getAllEvents()
-                request.data.startsWith("cat_") -> {
-                    val sport = request.data.removePrefix("cat_")
-                    getEventsBySport(sport)
-                }
-                else -> newHomePageResponse(list = mutableListOf(), hasNext = false)
+            when (request.data) {
+                "_live" -> buildLivePage()
+                "_all" -> buildCategoryPage(null)
+                else -> buildCategoryPage(request.data)
             }
         } catch (e: Exception) {
             newHomePageResponse(list = mutableListOf(), hasNext = false)
         }
     }
 
-    private suspend fun getLiveEvents(): HomePageResponse {
+    private suspend fun buildLivePage(): HomePageResponse {
+        val all = fetchAllMatches()
+        val live = all.filter { isLive(it) }
         val items = mutableListOf<HomePageList>()
-        try {
-            val all = fetchAllMatches()
-            val liveEvents = all.filter { it.status == "live" && it.home?.isNotBlank() == true }
-            if (liveEvents.isNotEmpty()) {
-                items.add(HomePageList(
-                    "🔴 Live Now",
-                    liveEvents.mapNotNull { it.toSearchResponse() },
-                    isHorizontalImages = false
-                ))
-            }
-        } catch (_: Exception) {}
-        return newHomePageResponse(list = items, hasNext = false)
-    }
 
-    private suspend fun getAllEvents(): HomePageResponse {
-        val items = mutableListOf<HomePageList>()
-        try {
-            val all = fetchAllMatches().filter { it.home?.isNotBlank() == true }
-            if (all.isNotEmpty()) {
-                items.add(HomePageList(
-                    "📅 All Events",
-                    all.mapNotNull { it.toSearchResponse() },
-                    isHorizontalImages = false
-                ))
-            }
-        } catch (_: Exception) {}
-        return newHomePageResponse(list = items, hasNext = false)
-    }
-
-    private suspend fun getEventsBySport(sportSlug: String): HomePageResponse {
-        val label = sportLabels[sportSlug] ?: sportSlug.replaceFirstChar { it.uppercase() }
-        val items = mutableListOf<HomePageList>()
-        try {
-            val all = fetchAllMatches()
-            val filtered = all
-                .filter { it.sport == sportSlug && it.home?.isNotBlank() == true }
-                .sortedWith(
-                    compareByDescending<Match> { it.status == "live" }
-                        .thenBy { it.startTime ?: "" }
-                )
-
-            if (filtered.isNotEmpty()) {
+        if (live.isNotEmpty()) {
+            // Group live events by category
+            val byCat = live.groupBy { it.category ?: "other" }
+            for ((cat, matches) in byCat) {
+                val label = categoryIcons[cat]?.let { "$it $cat" } ?: cat
                 items.add(HomePageList(
                     label,
-                    filtered.mapNotNull { it.toSearchResponse() },
-                    isHorizontalImages = false
+                    matches.mapNotNull { it.toSearchResponse() },
+                    isHorizontalImages = true
                 ))
             }
-        } catch (_: Exception) {}
+        }
+        return newHomePageResponse(list = items, hasNext = false)
+    }
+
+    private suspend fun buildCategoryPage(category: String?): HomePageResponse {
+        val all = fetchAllMatches()
+        val filtered = if (category != null) all.filter { it.category == category }
+                        else all
+
+        val items = mutableListOf<HomePageList>()
+
+        // Live events first
+        val live = filtered.filter { isLive(it) }
+        if (live.isNotEmpty()) {
+            items.add(HomePageList(
+                "\uD83D\uDD34 Live",
+                live.mapNotNull { it.toSearchResponse() },
+                isHorizontalImages = true
+            ))
+        }
+
+        // Upcoming events
+        val upcoming = filtered.filter { !isLive(it) }
+        if (upcoming.isNotEmpty()) {
+            val label = if (category != null)
+                "${categoryIcons[category] ?: ""} Upcoming"
+            else "All Events"
+
+            items.add(HomePageList(
+                label,
+                upcoming.mapNotNull { it.toSearchResponse() },
+                isHorizontalImages = false
+            ))
+        }
+
         return newHomePageResponse(list = items, hasNext = false)
     }
 
@@ -187,16 +176,14 @@ class DamiTV : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.lowercase().trim()
-        val matches = try {
-            fetchAllMatches()
-        } catch (_: Exception) { return emptyList() }
-
+        val matches = try { fetchAllMatches() } catch (_: Exception) { return emptyList() }
         return matches
             .filter { m ->
-                (m.name?.lowercase()?.contains(q) == true) ||
-                (m.home?.lowercase()?.contains(q) == true) ||
-                (m.away?.lowercase()?.contains(q) == true) ||
-                (m.league?.lowercase()?.contains(q) == true)
+                (m.title?.lowercase()?.contains(q) == true) ||
+                (m.teams?.home?.name?.lowercase()?.contains(q) == true) ||
+                (m.teams?.away?.name?.lowercase()?.contains(q) == true) ||
+                (m.league?.lowercase()?.contains(q) == true) ||
+                (m.category?.lowercase()?.contains(q) == true)
             }
             .mapNotNull { it.toSearchResponse() }
     }
@@ -204,7 +191,7 @@ class DamiTV : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Load (Match Detail)
+    // Load (Detail)
     // ──────────────────────────────────────────────────────────────────────────
 
     override suspend fun load(url: String): LoadResponse? {
@@ -213,30 +200,20 @@ class DamiTV : MainAPI() {
             val matches = fetchAllMatches()
             val match = matches.find { it.id == matchId } ?: return null
 
-            val title = "${match.home ?: "?"} vs ${match.away ?: "?"}"
-            val statusEmoji = when (match.status) {
-                "live" -> "🔴 LIVE"
-                else -> "⏳ ${match.status?.replaceFirstChar { it.uppercase() } ?: "Upcoming"}"
-            }
+            val title = matchTitle(match)
+            val statusEmoji = if (isLive(match)) "\uD83D\uDD34 LIVE" else "\u23F3 Upcoming"
 
             val desc = buildString {
-                appendLine("📊 Status: $statusEmoji")
-                match.league?.let { appendLine("🏆 League: $it") }
-                match.scores?.let { s ->
-                    if (s.homeScore != null || s.awayScore != null) {
-                        appendLine("⚽ Score: ${s.homeScore ?: "?"} - ${s.awayScore ?: "?"}")
-                    }
-                    s.halfTime?.let { if (it != "0-0") appendLine("⏱️ HT: $it") }
-                }
+                appendLine("\uD83D\uDCCA Status: $statusEmoji")
+                match.league?.let { appendLine("\uD83C\uDFC6 League: $it") }
+                match.category?.let { appendLine("\uD83D\uDCCB Category: $it") }
+                match.viewers?.let { if (it > 0) appendLine("\uD83D\uDC65 Viewers: $it") }
             }
 
-            val posterUrl = match.homeLogo?.takeIf { it.isNotBlank() }
-                ?: match.leagueLogo?.takeIf { it.isNotBlank() }
-
             newMovieLoadResponse(title, url, TvType.Live, url) {
-                this.posterUrl = posterUrl
+                this.posterUrl = match.poster?.let { "https://streamed.pk$it" }
                 this.plot = desc.trim()
-                this.tags = listOfNotNull(match.sport, match.league, match.status)
+                this.tags = listOfNotNull(match.category, match.league, match.status)
             }
         } catch (e: Exception) {
             null
@@ -244,7 +221,7 @@ class DamiTV : MainAPI() {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Link Extraction
+    // Links
     // ──────────────────────────────────────────────────────────────────────────
 
     override suspend fun loadLinks(
@@ -256,95 +233,58 @@ class DamiTV : MainAPI() {
         val matchId = data.substringAfterLast("/").substringBefore("?")
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId } ?: return false
-        val isLive = match.status == "live"
 
         var foundAny = false
 
-        // Source 1: HLS Live (direct m3u8, only for live matches)
-        if (isLive) {
-            val hlsUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
-            try {
-                val check = withContext(Dispatchers.IO) {
-                    app.get(hlsUrl, headers = headers).text
-                }
-                if (check.isNotBlank() && check.contains("#EXT")) {
-                    val wrapped = runBlocking {
-                        newExtractorLink(
-                            source = name,
-                            name = "HD HLS",
-                            url = hlsUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = "$mainUrl/"
-                            this.quality = Qualities.Unknown.value
-                            this.headers = mapOf(
-                                "User-Agent" to headers["User-Agent"]!!,
-                                "Referer" to mainUrl
-                            )
-                        }
+        // Source 1: Direct HLS stream (best quality, ad-free)
+        val hlsUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
+        try {
+            val check = withContext(Dispatchers.IO) {
+                app.get(hlsUrl, headers = headers).text
+            }
+            if (check.isNotBlank() && check.contains("#EXT")) {
+                val wrapped = runBlocking {
+                    newExtractorLink(
+                        source = name,
+                        name = "HD HLS",
+                        url = hlsUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to headers["User-Agent"]!!,
+                            "Referer" to mainUrl
+                        )
                     }
-                    callback(wrapped)
-                    foundAny = true
                 }
-            } catch (_: Exception) {}
-        }
+                callback(wrapped)
+                foundAny = true
+            }
+        } catch (_: Exception) {}
 
-        // Source 2: FAWA stream (JSON endpoint)
-        if (!foundAny) {
-            try {
-                val fawaUrl = "$mainUrl/papi/fawa/stream/$matchId"
-                val text = withContext(Dispatchers.IO) {
-                    app.get(fawaUrl, headers = headers).text
-                }
-                val mapper = jacksonObjectMapper()
-                val fawaRes = mapper.readValue<StreamResponse>(text)
-                if (fawaRes.success == true && fawaRes.stream?.isNotBlank() == true) {
-                    val wrapped = runBlocking {
-                        newExtractorLink(
-                            source = name,
-                            name = "FAWA",
-                            url = fawaRes.stream,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = "$mainUrl/"
-                            this.quality = Qualities.Unknown.value
-                            this.headers = mapOf(
-                                "User-Agent" to headers["User-Agent"]!!,
-                                "Referer" to mainUrl
-                            )
-                        }
+        // Source 2: PPV stream endpoint (resolves to embed URL)
+        if (!foundAny && match.sources?.isNotEmpty() == true) {
+            for (src in match.sources) {
+                try {
+                    val streamUrl = "$API/stream/${src.source}/${src.id}"
+                    val text = withContext(Dispatchers.IO) {
+                        app.get(streamUrl, headers = headers).text
                     }
-                    callback(wrapped)
-                    foundAny = true
-                }
-            } catch (_: Exception) {}
-        }
+                    val mapper = jacksonObjectMapper()
+                    val items: List<StreamItem> = mapper.readValue(text)
+                    for (item in items) {
+                        val embed = item.embedUrl ?: continue
+                        val label = item.language?.takeIf { it.isNotBlank() } ?: "PPV"
+                        val hd = if (item.hd == true) "HD" else ""
+                        val name = buildString { append("PPV $label"); if (hd.isNotEmpty()) append(" $hd") }
 
-        // Source 3: TFliX search (name-based lookup)
-        if (!foundAny) {
-            try {
-                val home = java.net.URLEncoder.encode(match.home ?: "", "UTF-8")
-                val away = java.net.URLEncoder.encode(match.away ?: "", "UTF-8")
-                val cat = java.net.URLEncoder.encode(match.sport ?: "", "UTF-8")
-                val tflixUrl = "$mainUrl/tflix/find?home=$home&away=$away&category=$cat"
-                val text = withContext(Dispatchers.IO) {
-                    app.get(tflixUrl, headers = headers).text
-                }
-                val mapper = jacksonObjectMapper()
-                val tflixData = mapper.readValue<Map<String, Any>>(text)
-                if (tflixData["found"] == true) {
-                    @Suppress("UNCHECKED_CAST")
-                    val sources = tflixData["sources"] as? List<Map<String, Any>> ?: emptyList()
-                    for ((i, src) in sources.withIndex()) {
-                        val playUrl = (src["playUrl"] as? String) ?: continue
-                        val fullUrl = if (playUrl.startsWith("http")) playUrl
-                            else "$mainUrl$playUrl"
-                        val label = (src["name"] as? String) ?: "Source ${i + 1}"
+                        // Use loadExtractor so the embed is parsed by Cloudstream
                         val wrapped = runBlocking {
                             newExtractorLink(
                                 source = name,
-                                name = "TFliX $label",
-                                url = fullUrl,
+                                name = name,
+                                url = embed,
                                 type = ExtractorLinkType.M3U8
                             ) {
                                 this.referer = "$mainUrl/"
@@ -358,46 +298,32 @@ class DamiTV : MainAPI() {
                         callback(wrapped)
                         foundAny = true
                     }
-                }
-            } catch (_: Exception) {}
-        }
-
-        // Source 4: Generic stream endpoint (try common sources)
-        if (!foundAny) {
-            for (source in listOf("fawa", "hls-live", "ppv-embed", "90sport")) {
-                try {
-                    val streamUrl = "$mainUrl/papi/stream/$source/$matchId"
-                    val text = withContext(Dispatchers.IO) {
-                        app.get(streamUrl, headers = headers).text
-                    }
-                    if (text.isNotBlank() && text != "[]" && text != "{}") {
-                        val mapper = jacksonObjectMapper()
-                        val data = mapper.readValue<List<Map<String, Any>>>(text)
-                        for (item in data) {
-                            val url = (item["url"] as? String) ?: continue
-                            val label = (item["label"] as? String) ?: source
-                            val wrapped = runBlocking {
-                                newExtractorLink(
-                                    source = name,
-                                    name = label,
-                                    url = url,
-                                    type = ExtractorLinkType.M3U8
-                                ) {
-                                    this.referer = "$mainUrl/"
-                                    this.quality = Qualities.Unknown.value
-                                    this.headers = mapOf(
-                                        "User-Agent" to headers["User-Agent"]!!,
-                                        "Referer" to mainUrl
-                                    )
-                                }
-                            }
-                            callback(wrapped)
-                            foundAny = true
-                        }
-                    }
                 } catch (_: Exception) {}
                 if (foundAny) break
             }
+        }
+
+        // Source 3: Direct embedUrl (if no sources array)
+        if (!foundAny && match.embedUrl?.isNotBlank() == true) {
+            try {
+                val wrapped = runBlocking {
+                    newExtractorLink(
+                        source = name,
+                        name = "Embed",
+                        url = match.embedUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to headers["User-Agent"]!!,
+                            "Referer" to mainUrl
+                        )
+                    }
+                }
+                callback(wrapped)
+                foundAny = true
+            } catch (_: Exception) {}
         }
 
         return foundAny
@@ -407,24 +333,15 @@ class DamiTV : MainAPI() {
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
 
-    /** Convert a Match object into a Cloudstream SearchResponse */
-    private fun Match.toSearchResponse(): LiveSearchResponse? {
-        val h = home ?: return null
-        val a = away ?: return null
-        val title = buildString {
-            append("$h vs $a")
-            scores?.let { s ->
-                if (s.homeScore != null || s.awayScore != null) {
-                    append(" (${s.homeScore ?: "?"}-${s.awayScore ?: "?"})")
-                }
-            }
-            if (status == "live") append(" 🔴")
-        }
+    private fun ApiMatch.toSearchResponse(): LiveSearchResponse? {
+        val title = matchTitle(this)
+        val posterUrl = poster?.let { "https://streamed.pk$it" }
+            ?: teams?.home?.badge?.takeIf { it.isNotBlank() }
         val detailUrl = "$mainUrl/event/${id ?: return null}"
 
         return newLiveSearchResponse(title, detailUrl, TvType.Live) {
-            this.posterUrl = homeLogo?.takeIf { it.isNotBlank() }
-                ?: leagueLogo?.takeIf { it.isNotBlank() }
+            this.posterUrl = posterUrl
+            if (isLive(this@toSearchResponse)) this.name += " \uD83D\uDD34"
         }
     }
 }
