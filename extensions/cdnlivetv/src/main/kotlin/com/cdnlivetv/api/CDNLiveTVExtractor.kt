@@ -201,7 +201,7 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                                     (reqUrl.contains("/secure/api/v1/") && reqUrl.contains("playlist"))
                                 )) {
                                     if (captured.compareAndSet(false, true)) {
-                                        cont.resume(reqUrl)
+                                        cont.resume(reqUrl, onCancellation = null)
                                         Handler(Looper.getMainLooper()).postDelayed({
                                             try { destroy() } catch (_: Exception) {}
                                         }, 500)
@@ -227,14 +227,14 @@ open class CDNLiveTVExtractor(context: Context) : ExtractorApi() {
                     // Fire TV hardware is slower and needs more time for Cloudflare + OPlayer
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
-                            cont.resume(null)
+                            cont.resume(null, onCancellation = null)
                             try { webView?.destroy() } catch (_: Exception) {}
                         }
                     }, 30000)
 
                 } catch (e: Exception) {
                     if (captured.compareAndSet(false, true)) {
-                        cont.resume(null)
+                        cont.resume(null, onCancellation = null)
                     }
                 }
 
