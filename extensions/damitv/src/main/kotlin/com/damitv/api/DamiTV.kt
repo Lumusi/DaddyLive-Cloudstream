@@ -72,7 +72,7 @@ class DamiTV : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        homeCategories.map { it.first to it.second }
+        *homeCategories.map { it.first to it.second }.toTypedArray()
     )
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -341,7 +341,7 @@ class DamiTV : MainAPI() {
 
         return newLiveSearchResponse(title, detailUrl, TvType.Live) {
             this.posterUrl = posterUrl
-            if (isLive(this@toSearchResponse)) this.name += " \uD83D\uDD34"
+            if (isLive(this@toSearchResponse)) this.name = "$title \uD83D\uDD34"
         }
     }
 }
