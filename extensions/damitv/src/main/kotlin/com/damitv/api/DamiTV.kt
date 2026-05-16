@@ -392,15 +392,6 @@ class DamiTV : MainAPI() {
                             "SD", "480" -> 480
                             else -> Qualities.Unknown.value
                         }
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-                            "Referer" to playerReferer,
-                            "Accept" to "*/*",
-                            "Origin" to mainUrl,
-                            "Sec-Fetch-Dest" to "empty",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "same-origin"
-                        )
                     }
                     callback(wrapped)
                     foundAny = true
@@ -443,15 +434,6 @@ class DamiTV : MainAPI() {
                     ) {
                         this.referer = playerReferer
                         this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-                            "Referer" to playerReferer,
-                            "Accept" to "*/*",
-                            "Origin" to mainUrl,
-                            "Sec-Fetch-Dest" to "empty",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "same-origin"
-                        )
                     }
                     callback(wrapped)
                     foundAny = true
@@ -474,15 +456,6 @@ class DamiTV : MainAPI() {
             ) {
                 this.referer = playerReferer
                 this.quality = Qualities.Unknown.value
-                this.headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-                    "Referer" to playerReferer,
-                    "Accept" to "*/*",
-                    "Origin" to mainUrl,
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "same-origin"
-                )
             }
             callback(wrapped)
             return true
