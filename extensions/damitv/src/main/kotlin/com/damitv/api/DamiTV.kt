@@ -12,9 +12,13 @@ import kotlinx.coroutines.withContext
 /**
  * DamiTV (dami-tv.pro) — Free live sports & 24/7 channel streaming.
  *
- * Data:  /papi/matches/all  →  full enriched match objects with embedUrl, posters
- * Playback: embedUrl (pooembed.eu/embed/{matchId}) → WebView intercepts .m3u8 (DamiTVExtractor)
- * Channels: /channels.json → cdn-stream/{name} direct M3U8
+ * Both channels and events return direct M3U8 URLs (no WebView needed):
+ *   Channels: https://dami-tv.pro/cdn-stream/{name}
+ *   Events:   https://dami-tv.pro/live-hls/channel/{matchId}/playlist.m3u8
+ *
+ * Both require Referer: https://dami-tv.pro/ but no Cloudflare session.
+ * CDNLiveTV needs WebView extraction because its streams are behind
+ * Cloudflare. DamiTV doesn't have that, so we return direct links.
  */
 class DamiTV : MainAPI() {
     override var mainUrl = "https://dami-tv.pro"
@@ -323,6 +327,12 @@ class DamiTV : MainAPI() {
     // ──────────────────────────────────────────────────────────────────────────
     // Links
     // ──────────────────────────────────────────────────────────────────────────
+    //
+    // Both channels and events return direct M3U8 URLs (no WebView needed):
+    //   Channels: https://dami-tv.pro/cdn-stream/{name}
+    //   Events:   https://dami-tv.pro/live-hls/channel/{matchId}/playlist.m3u8
+    //
+    // Both require Referer: https://dami-tv.pro/ but no Cloudflare session.
 
     override suspend fun loadLinks(
         data: String,
@@ -370,33 +380,35 @@ class DamiTV : MainAPI() {
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
-        // Use the embed URL from /papi/matches/all (e.g. pooembed.eu/embed/{matchId})
-        // and intercept the HLS playlist via WebView (DamiTVExtractor).
+        // Direct HLS URL: live-hls/channel/{matchId}/playlist.m3u8
+        // Works with Referer: https://dami-tv.pro/ (confirmed 200 OK)
         val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId } ?: return false
-        val embedUrl = match.embedUrl?.takeIf { it.isNotBlank() } ?: return false
 
-        loadExtractor(
-            url = embedUrl,
-            subtitleCallback = subtitleCallback,
-            callback = { link ->
-                val wrapped = runBlocking {
-                    newExtractorLink(
-                        source = "${link.source} [DamiTV]",
-                        name = "${link.name} [DamiTV]",
-                        url = link.url,
-                        type = link.type
-                    ) {
-                        this.referer = link.referer
-                        this.quality = link.quality
-                        this.headers = link.headers
-                    }
+        val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
+        try {
+            val wrapped = runBlocking {
+                newExtractorLink(
+                    source = name,
+                    name = match.league?.let { "$it HLS" } ?: "Event HLS",
+                    url = streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.quality = Qualities.Unknown.value
+                    this.headers = mapOf(
+                        "User-Agent" to headers["User-Agent"]!!,
+                        "Referer" to mainUrl,
+                        "Accept" to "*/*"
+                    )
                 }
-                callback(wrapped)
             }
-        )
-        return true
+            callback(wrapped)
+            return true
+        } catch (_: Exception) {
+            return false
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────

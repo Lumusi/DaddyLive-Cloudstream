@@ -16,18 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * WebView-based extractor for DamiTV embed pages (pooembed.eu).
  *
- * The embed domain (pooembed.eu) loads player JS dynamically — either JW Player
- * (default) or Clappr — with no static video content in the HTML. The only
- * reliable way to extract the HLS stream is by rendering the page in a WebView,
- * letting the player initialize, and intercepting the resulting .m3u8 network request.
+ * Replicates the CDNLiveTV extraction pattern: load the player page in a WebView,
+ * wait for JS player initialization, and intercept the .m3u8 network request
+ * via shouldInterceptRequest.
  *
  * Architecture:
  * 1. Embed page loaded in headless WebView: pooembed.eu/embed/{matchId}
  * 2. Player JS (JW Player / Clappr) initializes and fetches the HLS manifest
  * 3. shouldInterceptRequest captures the first .m3u8 URL
  * 4. URL is passed to the player as an ExtractorLink
- *
- * Ad domains are blocked to reduce page load time and prevent popup injection.
  */
 open class DamiTVExtractor(context: Context) : ExtractorApi() {
     override val name = "DamiTV"
@@ -42,19 +39,10 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
             "Accept-Language" to "en-US,en;q=0.5",
             "Referer" to "https://dami-tv.pro/"
         )
-
-        // Ad/tracker domains to block — these inject popups and slow down the page
-        private val blockedDomains = listOf(
-            "wpnxiswpuyrfn.icu",
-            "vbcojhroxkoaf.online",
-            "adexchangeclear.com",
-            "velocecdn.com"
-        )
     }
 
     /**
      * Primary extraction: WebView-based with retry.
-     * The pooembed.eu page requires JS execution (player loads dynamically).
      */
     override suspend fun getUrl(
         url: String,
@@ -110,11 +98,7 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
 
     /**
      * Launches a headless WebView to render the pooembed.eu embed page and capture
-     * the .m3u8 stream URL from network requests.
-     *
-     * The page loads player JS dynamically after ad/tracking scripts. We wait
-     * for the player to initialize and request the stream, then capture the .m3u8
-     * URL via shouldInterceptRequest.
+     * the .m3u8 stream URL from network requests (matching CDNLiveTV pattern).
      */
     private suspend fun getVideoUrlWithWebView(context: Context, url: String): String? {
         return withContext(Dispatchers.Main) {
@@ -132,7 +116,7 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
                         settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
                         settings.setSupportZoom(false)
                         settings.loadWithOverviewMode = true
-                        settings.blockNetworkImage = true  // Block images (ads)
+                        settings.blockNetworkImage = false  // Don't block — JW Player needs images
                         settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         settings.setGeolocationEnabled(false)
 
@@ -140,7 +124,7 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
 
-                                // Wait for player to initialize (ads + player JS need time)
+                                // Wait for player JS to load, then trigger playback
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     view?.evaluateJavascript(
                                         """
@@ -150,21 +134,21 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
                                                 if (typeof jwplayer === 'function') {
                                                     try { jwplayer().play(); } catch(e) {}
                                                 }
-                                                // Try standard video element
-                                                var video = document.querySelector('video');
-                                                if (video) { video.play(); }
                                                 // Try Clappr player
                                                 if (window.player && typeof window.player.play === 'function') {
                                                     window.player.play();
                                                 }
+                                                // Try video element
+                                                var video = document.querySelector('video');
+                                                if (video) { video.play(); }
                                                 return 'play_attempted';
                                             } catch(e) {
                                                 return 'error: ' + e.message;
                                             }
                                         })();
                                         """.trimIndent()
-                                    ) { result -> }
-                                }, 6000) // 6s for ads + player init
+                                    ) { _ -> }
+                                }, 3500) // 3.5s delay (matches CDNLiveTV)
                             }
 
                             @Suppress("DEPRECATION")
@@ -174,12 +158,7 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
                             ): android.webkit.WebResourceResponse? {
                                 val reqUrl = request?.url?.toString() ?: return null
 
-                                // Block ad/tracker domains to reduce page clutter
-                                if (blockedDomains.any { reqUrl.contains(it, ignoreCase = true) }) {
-                                    return android.webkit.WebResourceResponse(null, null, null)
-                                }
-
-                                // Capture HLS manifest URLs
+                                // Capture HLS manifest URLs (same pattern as CDNLiveTV)
                                 if (!captured.get() && (
                                     reqUrl.endsWith(".m3u8", ignoreCase = true) ||
                                     reqUrl.endsWith(".ms3", ignoreCase = true)
@@ -200,14 +179,13 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
                                 error: android.webkit.WebResourceError?
                             ) {
                                 super.onReceivedError(view, request, error)
-                                // Don't fail on sub-resource errors (ads failing, etc.)
                             }
                         }
                     }
 
                     webView.loadUrl(url)
 
-                    // Timeout: 30 seconds max for stream capture
+                    // Timeout: 30 seconds max
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
                             cont.resume(null, onCancellation = null)
