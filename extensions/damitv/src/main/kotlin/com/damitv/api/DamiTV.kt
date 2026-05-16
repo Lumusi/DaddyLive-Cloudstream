@@ -6,7 +6,6 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /**
@@ -352,25 +351,23 @@ class DamiTV : MainAPI() {
 
             val streamUrl = channel.defaultUrl ?: "$mainUrl/cdn-stream/${channel.name?.replace(" ", "%20") ?: return false}"
             try {
-                val wrapped = runBlocking {
-                    newExtractorLink(
-                        source = name,
-                        name = "${channel.defaultQuality ?: "SD"} ${channel.name ?: "Channel"}",
-                        url = streamUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$mainUrl/"
-                        this.quality = when (channel.defaultQuality) {
-                            "HD" -> 720
-                            "FHD" -> 1080
-                            "4K" -> 2160
-                            else -> Qualities.Unknown.value
-                        }
-                        this.headers = mapOf(
-                            "User-Agent" to headers["User-Agent"]!!,
-                            "Referer" to mainUrl
-                        )
+                val wrapped = newExtractorLink(
+                    source = name,
+                    name = "${channel.defaultQuality ?: "SD"} ${channel.name ?: "Channel"}",
+                    url = streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.quality = when (channel.defaultQuality) {
+                        "HD" -> 720
+                        "FHD" -> 1080
+                        "4K" -> 2160
+                        else -> Qualities.Unknown.value
                     }
+                    this.headers = mapOf(
+                        "User-Agent" to headers["User-Agent"]!!,
+                        "Referer" to mainUrl
+                    )
                 }
                 callback(wrapped)
                 return true
@@ -380,35 +377,49 @@ class DamiTV : MainAPI() {
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
-        // Direct HLS URL: live-hls/channel/{matchId}/playlist.m3u8
-        // Works with Referer: https://dami-tv.pro/ (confirmed 200 OK)
         val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId } ?: return false
 
+        // Try direct M3U8 first
         val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
         try {
-            val wrapped = runBlocking {
-                newExtractorLink(
-                    source = name,
-                    name = match.league?.let { "$it HLS" } ?: "Event HLS",
-                    url = streamUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.Unknown.value
-                    this.headers = mapOf(
-                        "User-Agent" to headers["User-Agent"]!!,
-                        "Referer" to mainUrl,
-                        "Accept" to "*/*"
-                    )
-                }
+            val wrapped = newExtractorLink(
+                source = name,
+                name = match.league?.let { "$it HLS" } ?: "Event HLS",
+                url = streamUrl,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = "$mainUrl/"
+                this.quality = Qualities.Unknown.value
+                this.headers = mapOf(
+                    "User-Agent" to headers["User-Agent"]!!,
+                    "Referer" to mainUrl,
+                    "Accept" to "*/*"
+                )
             }
             callback(wrapped)
             return true
         } catch (_: Exception) {
-            return false
+            // Fallback: try extractor if direct URL fails
         }
+
+        // Try using the WebView extractor as fallback
+        match.embedUrl?.let { embedUrl ->
+            try {
+                loadExtractor(
+                    url = embedUrl,
+                    referer = mainUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+                return true
+            } catch (_: Exception) {
+                // Extractor failed
+            }
+        }
+
+        return false
     }
 
     // ──────────────────────────────────────────────────────────────────────────

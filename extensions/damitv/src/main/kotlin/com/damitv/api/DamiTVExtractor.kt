@@ -50,6 +50,12 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        // If URL is already an m3u8 link, return it directly
+        if (url.endsWith(".m3u8", ignoreCase = true) || url.endsWith(".ms3", ignoreCase = true)) {
+            tryExtractDirectUrl(url, callback)
+            return
+        }
+
         var lastError: Exception? = null
         repeat(2) { attempt ->
             try {
