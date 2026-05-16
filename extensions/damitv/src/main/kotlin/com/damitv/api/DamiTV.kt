@@ -381,7 +381,23 @@ class DamiTV : MainAPI() {
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId } ?: return false
 
-        // Try direct M3U8 first
+        // Use embedUrl with WebView extractor (format: https://pooembed.eu/embed/{category}/{date}/{slug})
+        val embedUrl = match.embedUrl
+        if (!embedUrl.isNullOrBlank()) {
+            try {
+                loadExtractor(
+                    url = embedUrl,
+                    referer = mainUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+                return true
+            } catch (_: Exception) {
+                // Extractor failed, try fallback
+            }
+        }
+
+        // Fallback: try direct M3U8 URL
         val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
         try {
             val wrapped = newExtractorLink(
@@ -401,25 +417,8 @@ class DamiTV : MainAPI() {
             callback(wrapped)
             return true
         } catch (_: Exception) {
-            // Fallback: try extractor if direct URL fails
+            return false
         }
-
-        // Try using the WebView extractor as fallback
-        match.embedUrl?.let { embedUrl ->
-            try {
-                loadExtractor(
-                    url = embedUrl,
-                    referer = mainUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = callback
-                )
-                return true
-            } catch (_: Exception) {
-                // Extractor failed
-            }
-        }
-
-        return false
     }
 
     // ──────────────────────────────────────────────────────────────────────────

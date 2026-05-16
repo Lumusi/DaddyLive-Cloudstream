@@ -154,7 +154,28 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
                                         })();
                                         """.trimIndent()
                                     ) { _ -> }
-                                }, 3500) // 3.5s delay (matches CDNLiveTV)
+                                }, 5000)
+
+                                // Second attempt after more time
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    view?.evaluateJavascript(
+                                        """
+                                        (function() {
+                                            try {
+                                                if (typeof jwplayer === 'function') {
+                                                    try { jwplayer().play(); } catch(e) {}
+                                                }
+                                                if (window.player && typeof window.player.play === 'function') {
+                                                    window.player.play();
+                                                }
+                                                var video = document.querySelector('video');
+                                                if (video && video.paused) { video.play(); }
+                                                return 'retry';
+                                            } catch(e) { return 'error: ' + e.message; }
+                                        })();
+                                        """.trimIndent()
+                                    ) { _ -> }
+                                }, 10000)
                             }
 
                             @Suppress("DEPRECATION")
@@ -164,10 +185,12 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
                             ): android.webkit.WebResourceResponse? {
                                 val reqUrl = request?.url?.toString() ?: return null
 
-                                // Capture HLS manifest URLs (same pattern as CDNLiveTV)
+                                // Capture HLS manifest URLs
                                 if (!captured.get() && (
                                     reqUrl.endsWith(".m3u8", ignoreCase = true) ||
-                                    reqUrl.endsWith(".ms3", ignoreCase = true)
+                                    reqUrl.endsWith(".ms3", ignoreCase = true) ||
+                                    reqUrl.contains("/m3u8/", ignoreCase = true) ||
+                                    reqUrl.contains("m3u8", ignoreCase = true) && reqUrl.contains("http")
                                 )) {
                                     if (captured.compareAndSet(false, true)) {
                                         cont.resume(reqUrl, onCancellation = null)
@@ -191,13 +214,13 @@ open class DamiTVExtractor(context: Context) : ExtractorApi() {
 
                     webView.loadUrl(url)
 
-                    // Timeout: 30 seconds max
+                    // Timeout: 45 seconds max
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
                             cont.resume(null, onCancellation = null)
                             try { webView?.destroy() } catch (_: Exception) {}
                         }
-                    }, 30000)
+                    }, 45000)
 
                 } catch (e: Exception) {
                     if (captured.compareAndSet(false, true)) {
