@@ -310,6 +310,11 @@ class DamiTV : MainAPI() {
                 match.league?.let { appendLine("\uD83C\uDFC6 League: $it") }
                 match.category?.let { appendLine("\uD83D\uDCCB Category: $it") }
                 match.viewers?.let { if (it > 0) appendLine("\uD83D\uDC65 Viewers: $it") }
+                match.sources?.let { sources ->
+                    if (sources.size > 1) {
+                        appendLine("\uD83D\uDCE1 Sources: ${sources.size} available")
+                    }
+                }
             }
 
             // Pass embedUrl as dataUrl for loadLinks (same pattern as CDNLiveTV)
@@ -381,58 +386,97 @@ class DamiTV : MainAPI() {
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
-        // Try direct M3U8 first (confirmed working with proper referer)
-        if (data.contains("$mainUrl/event/") || data.startsWith("https://pooembed.eu/embed/")) {
-            // Extract matchId from either URL format
-            val matchId = if (data.contains("$mainUrl/event/")) {
-                data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
-            } else {
-                // Parse from embedUrl: https://pooembed.eu/embed/{category}/{date}/{slug}
-                data.removePrefix("https://pooembed.eu/embed/").substringBefore("?").substringBefore("#")
+        // Extract matchId from either URL format
+        val matchId = if (data.contains("$mainUrl/event/")) {
+            data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
+        } else if (data.startsWith("https://pooembed.eu/embed/")) {
+            data.removePrefix("https://pooembed.eu/embed/").substringBefore("?").substringBefore("#")
+        } else {
+            return false
+        }
+
+        // Fetch match to check for multiple sources
+        val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
+        val match = matches.find { it.id == matchId }
+
+        // If multiple sources exist, iterate through each (same pattern as CDNLiveTV)
+        val sources = match?.sources?.filter { it.id?.isNotBlank() == true }
+        if (!sources.isNullOrEmpty()) {
+            var foundAny = false
+            for (src in sources) {
+                val sourceLabel = src.source ?: "Source"
+                val sourceId = src.id!!
+                val sourceStreamUrl = "$mainUrl/live-hls/channel/$sourceId/playlist.m3u8"
+                val encodedUrl = java.net.URLEncoder.encode("/live-hls/channel/$sourceId/playlist.m3u8", "UTF-8")
+                val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
+
+                try {
+                    val wrapped = newExtractorLink(
+                        source = "$name [$sourceLabel]",
+                        name = "$sourceLabel HLS",
+                        url = sourceStreamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = playerReferer
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+                            "Referer" to playerReferer,
+                            "Accept" to "*/*",
+                            "Origin" to mainUrl,
+                            "Sec-Fetch-Dest" to "empty",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "same-origin"
+                        )
+                    }
+                    callback(wrapped)
+                    foundAny = true
+                } catch (_: Exception) { /* skip failed source */ }
             }
+            if (foundAny) return true
+        }
 
-            val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
-            val encodedUrl = java.net.URLEncoder.encode("/live-hls/channel/$matchId/playlist.m3u8", "UTF-8")
-            val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
+        // Single source: use the primary matchId
+        val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
+        val encodedUrl = java.net.URLEncoder.encode("/live-hls/channel/$matchId/playlist.m3u8", "UTF-8")
+        val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
 
+        try {
+            val wrapped = newExtractorLink(
+                source = name,
+                name = "Event HLS",
+                url = streamUrl,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = playerReferer
+                this.quality = Qualities.Unknown.value
+                this.headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+                    "Referer" to playerReferer,
+                    "Accept" to "*/*",
+                    "Origin" to mainUrl,
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "same-origin"
+                )
+            }
+            callback(wrapped)
+            return true
+        } catch (_: Exception) {
+            // Fallback to WebView extractor
+        }
+
+        if (data.startsWith("https://pooembed.eu/embed/")) {
             try {
-                val wrapped = newExtractorLink(
-                    source = name,
-                    name = "Event HLS",
-                    url = streamUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = playerReferer
-                    this.quality = Qualities.Unknown.value
-                    this.headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-                        "Referer" to playerReferer,
-                        "Accept" to "*/*",
-                        "Origin" to mainUrl,
-                        "Sec-Fetch-Dest" to "empty",
-                        "Sec-Fetch-Mode" to "cors",
-                        "Sec-Fetch-Site" to "same-origin"
-                    )
-                }
-                callback(wrapped)
+                loadExtractor(
+                    url = data,
+                    referer = mainUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
                 return true
             } catch (_: Exception) {
-                // Fallback to WebView extractor
-            }
-
-            // WebView extractor fallback
-            if (data.startsWith("https://pooembed.eu/embed/")) {
-                try {
-                    loadExtractor(
-                        url = data,
-                        referer = mainUrl,
-                        subtitleCallback = subtitleCallback,
-                        callback = callback
-                    )
-                    return true
-                } catch (_: Exception) {
-                    return false
-                }
+                return false
             }
         }
 
