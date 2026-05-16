@@ -358,31 +358,55 @@ class DamiTV : MainAPI() {
                 it.name.equals(channelName, ignoreCase = true) || it.id == channelName
             } ?: return false
 
-            val streamUrl = channel.defaultUrl ?: "$mainUrl/cdn-stream/${channel.name?.replace(" ", "%20") ?: return false}"
-            try {
-                val wrapped = newExtractorLink(
-                    source = name,
-                    name = "${channel.defaultQuality ?: "SD"} ${channel.name ?: "Channel"}",
-                    url = streamUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = when (channel.defaultQuality) {
-                        "HD" -> 720
-                        "FHD" -> 1080
-                        "4K" -> 2160
-                        else -> Qualities.Unknown.value
-                    }
-                    this.headers = mapOf(
-                        "User-Agent" to headers["User-Agent"]!!,
-                        "Referer" to mainUrl
-                    )
+            // Try quality variants first, then default
+            val qualityUrls = mutableListOf<Pair<String, String>>()
+            channel.qualities?.forEach { q ->
+                if (!q.url.isNullOrBlank() && !q.quality.isNullOrBlank()) {
+                    qualityUrls.add(q.quality to q.url)
                 }
-                callback(wrapped)
-                return true
-            } catch (_: Exception) {
-                return false
             }
+            // Add default as fallback
+            val defaultUrl = channel.defaultUrl
+                ?: "$mainUrl/cdn-stream/${channel.name?.replace(" ", "%20")}"
+            if (defaultUrl != null) {
+                qualityUrls.add((channel.defaultQuality ?: "SD") to defaultUrl)
+            }
+
+            var foundAny = false
+            for ((qualityLabel, streamUrl) in qualityUrls) {
+                val encodedUrl = java.net.URLEncoder.encode(streamUrl.removePrefix("$mainUrl"), "UTF-8")
+                val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
+
+                try {
+                    val wrapped = newExtractorLink(
+                        source = name,
+                        name = "$qualityLabel ${channel.name ?: "Channel"}",
+                        url = streamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = playerReferer
+                        this.quality = when (qualityLabel.uppercase()) {
+                            "HD", "720" -> 720
+                            "FHD", "1080" -> 1080
+                            "4K", "2160" -> 2160
+                            "SD", "480" -> 480
+                            else -> Qualities.Unknown.value
+                        }
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+                            "Referer" to playerReferer,
+                            "Accept" to "*/*",
+                            "Origin" to mainUrl,
+                            "Sec-Fetch-Dest" to "empty",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "same-origin"
+                        )
+                    }
+                    callback(wrapped)
+                    foundAny = true
+                } catch (_: Exception) { /* skip failed quality */ }
+            }
+            return foundAny
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
