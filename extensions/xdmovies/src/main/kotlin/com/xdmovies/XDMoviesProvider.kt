@@ -2,13 +2,13 @@ package com.xdmovies
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.INFER_TYPE
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import org.jsoup.nodes.Element
+import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class XDMoviesProvider : MainAPI() {
     override var mainUrl = "https://xdmovies-api.hdmovielover.workers.dev"
@@ -21,7 +21,7 @@ class XDMoviesProvider : MainAPI() {
         TvType.TvSeries
     )
 
-    private val mapper = jacksonObjectMapper()
+    private val mapper = jacksonObjectMapper().registerKotlinModule()
 
     data class XDMoviesItem(
         @JsonProperty("title") val title: String?,
@@ -38,12 +38,6 @@ class XDMoviesProvider : MainAPI() {
         @JsonProperty("items") val items: List<XDMoviesItem>?
     )
 
-    data class XDMoviesSearchData(
-        val url: String,
-        val type: String,
-        val title: String
-    )
-
     private fun normalizeType(type: String?): String {
         return when (type?.lowercase()) {
             "series", "show", "tv" -> "series"
@@ -55,35 +49,55 @@ class XDMoviesProvider : MainAPI() {
         return item.detailUrl ?: item.detailUrlCamel ?: item.url
     }
 
+    private fun encodeData(detailUrl: String, type: String): String {
+        return "$mainUrl/xddata/${java.net.URLEncoder.encode(detailUrl, "UTF-8")}?type=$type"
+    }
+
+    private fun decodeData(url: String): Pair<String, String>? {
+        return try {
+            val withoutPrefix = url.removePrefix("$mainUrl/xddata/")
+            val encodedUrl = withoutPrefix.substringBefore("?")
+            val type = withoutPrefix.substringAfter("type=", "movie")
+            val decoded = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+            decoded to type
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private suspend fun fetchPage(pageNo: Int): List<XDMoviesItem> {
-        val response = app.get("$mainUrl/page?no=$pageNo")
-        val parsed = mapper.readValue(response.text, XDMoviesPageResponse::class.java)
+        val response = withContext(Dispatchers.IO) {
+            app.get("$mainUrl/page?no=$pageNo").text
+        }
+        val parsed: XDMoviesPageResponse = mapper.readValue(response)
         return parsed.items ?: emptyList()
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val items = fetchPage(page)
-        val home = items.mapNotNull { item ->
-            val title = item.title ?: return@mapNotNull null
-            val detailUrl = getRealDetailUrl(item) ?: return@mapNotNull null
-            val posterUrl = item.imageUrl ?: item.poster
-            val itemType = normalizeType(item.type)
-            val tvType = if (itemType == "series") TvType.TvSeries else TvType.Movie
+        return try {
+            val items = fetchPage(page)
+            val home = items.mapNotNull { item ->
+                val title = item.title ?: return@mapNotNull null
+                val detailUrl = getRealDetailUrl(item) ?: return@mapNotNull null
+                val posterUrl = item.imageUrl ?: item.poster
+                val itemType = normalizeType(item.type)
+                val tvType = if (itemType == "series") TvType.TvSeries else TvType.Movie
+                val dataUrl = encodeData(detailUrl, itemType)
 
-            newMovieSearchResponse(title, XDMoviesSearchData(detailUrl, itemType, title).toJson()) {
-                this.posterUrl = posterUrl
-                this.type = tvType
+                newMovieSearchResponse(title, dataUrl, tvType) {
+                    this.posterUrl = posterUrl
+                    this.type = tvType
+                    this.year = item.year
+                }
             }
-        }
 
-        return newHomePageResponse(
-            list = HomePageList(
-                name = "Latest",
-                list = home,
-                isHorizontalImages = false
-            ),
-            hasNext = home.isNotEmpty()
-        )
+            newHomePageResponse(
+                list = listOf(HomePageList("Latest", home, isHorizontalImages = false)),
+                hasNext = home.isNotEmpty()
+            )
+        } catch (e: Exception) {
+            newHomePageResponse(list = mutableListOf(), hasNext = false)
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -117,7 +131,7 @@ class XDMoviesProvider : MainAPI() {
                 if (seenUrls.contains(detailUrl)) continue
 
                 val titleLower = title.lowercase()
-                val queryWords = queryLower.split("\\s+".toRegex()).filter { it.length > 2 }
+                val queryWords = queryLower.split(Regex("\\s+")).filter { it.length > 2 }
                 val matchesQuery = queryWords.any { titleLower.contains(it) } ||
                                    titleLower.contains(queryLower)
 
@@ -125,11 +139,12 @@ class XDMoviesProvider : MainAPI() {
                     seenUrls.add(detailUrl)
                     val posterUrl = item.imageUrl ?: item.poster
                     val tvType = if (itemType == "series") TvType.TvSeries else TvType.Movie
+                    val dataUrl = encodeData(detailUrl, itemType)
 
-                    results.add(newMovieSearchResponse(title, XDMoviesSearchData(detailUrl, itemType, title).toJson()) {
+                    results.add(newMovieSearchResponse(title, dataUrl, tvType) {
                         this.posterUrl = posterUrl
                         this.type = tvType
-                        year = item.year
+                        this.year = item.year
                     })
                 }
             }
@@ -140,35 +155,181 @@ class XDMoviesProvider : MainAPI() {
         return results
     }
 
-    private fun extractDownloadLinks(data: Map<String, Any?>, detailUrl: String): List<ExtractorLink> {
-        val links = mutableListOf<ExtractorLink>()
+    override suspend fun load(url: String): LoadResponse? {
+        return try {
+            val data = decodeData(url) ?: return null
+            val detailUrl = data.first
+            val type = data.second
+
+            val endpoint = if (normalizeType(type) == "series") "series" else "movie"
+            val detailResponse = withContext(Dispatchers.IO) {
+                app.get("$mainUrl/$endpoint/details?url=${encodeUrl(detailUrl)}")
+            }
+            val detailJson = mapper.readTree(detailResponse.text)
+
+            val detailTitle = detailJson.get("title")?.asText()
+                ?: detailJson.get("name")?.asText()
+                ?: detailJson.get("movieTitle")?.asText()
+                ?: detailJson.get("seriesTitle")?.asText()
+                ?: "Unknown"
+
+            val posterUrl = detailJson.get("image_url")?.asText()
+                ?: detailJson.get("poster")?.asText()
+                ?: detailJson.get("poster_url")?.asText()
+
+            val plot = detailJson.get("description")?.asText()
+                ?: detailJson.get("plot")?.asText()
+                ?: detailJson.get("overview")?.asText()
+
+            val year = detailJson.get("year")?.asInt()
+            val rating = detailJson.get("rating")?.asText()?.toRatingInt()
+            val duration = detailJson.get("duration")?.asText()
+            val trailer = detailJson.get("trailer_url")?.asText()
+                ?: detailJson.get("trailer")?.asText()
+
+            val tags = mutableListOf<String>()
+            detailJson.get("genre")?.asText()?.let { tags.addAll(it.split(",").map { g -> g.trim() }) }
+
+            if (normalizeType(type) == "movie") {
+                newMovieLoadResponse(detailTitle, url, TvType.Movie, url) {
+                    this.posterUrl = posterUrl
+                    this.year = year
+                    this.plot = plot
+                    this.rating = rating
+                    addDuration(duration)
+                    this.tags = tags
+                    addTrailer(trailer)
+                }
+            } else {
+                val episodes = mutableListOf<Episode>()
+
+                val seasons = detailJson.get("seasons")
+                if (seasons != null && seasons.isArray) {
+                    for (seasonNode in seasons) {
+                        val seasonNum = seasonNode.get("season")?.asInt()
+                            ?: seasonNode.get("season_number")?.asInt()
+                            ?: 1
+
+                        val episodeList = seasonNode.get("episodes")
+                        if (episodeList != null && episodeList.isArray) {
+                            for (epNode in episodeList) {
+                                val epNum = epNode.get("episode")?.asInt()
+                                    ?: epNode.get("episode_number")?.asInt()
+                                    ?: 1
+
+                                val epTitle = epNode.get("title")?.asText()
+                                val epDetailUrl = epNode.get("detail_url")?.asText()
+                                    ?: epNode.get("url")?.asText()
+
+                                episodes.add(
+                                    newEpisode(encodeData(epDetailUrl ?: detailUrl, "series")) {
+                                        this.name = epTitle
+                                        this.season = seasonNum
+                                        this.episode = epNum
+                                    }
+                                )
+                            }
+                        } else {
+                            episodes.add(
+                                newEpisode(encodeData(detailUrl, "series")) {
+                                    this.season = seasonNum
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    episodes.add(newEpisode(url))
+                }
+
+                newTvSeriesLoadResponse(detailTitle, url, TvType.TvSeries, episodes) {
+                    this.posterUrl = posterUrl
+                    this.year = year
+                    this.plot = plot
+                    this.rating = rating
+                    this.tags = tags
+                    addTrailer(trailer)
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val decoded = decodeData(data) ?: return false
+            val detailUrl = decoded.first
+            val type = decoded.second
+
+            val endpoint = if (normalizeType(type) == "series") "series" else "movie"
+            val response = withContext(Dispatchers.IO) {
+                app.get("$mainUrl/$endpoint/details?url=${encodeUrl(detailUrl)}")
+            }
+
+            val jsonNode = mapper.readTree(response.text)
+            val links = extractLinks(jsonNode)
+
+            for (link in links) {
+                val wrapped = newExtractorLink(
+                    source = name,
+                    name = link.name,
+                    url = link.url,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = link.referer
+                    this.quality = link.quality
+                }
+                callback(wrapped)
+            }
+
+            links.isNotEmpty()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    data class StreamLink(
+        val name: String,
+        val url: String,
+        val referer: String = "",
+        val quality: Int = Qualities.Unknown.value
+    )
+
+    private fun extractLinks(node: com.fasterxml.jackson.databind.JsonNode): List<StreamLink> {
+        val links = mutableListOf<StreamLink>()
         val seenUrls = mutableSetOf<String>()
 
-        fun traverse(node: Any?, context: MutableMap<String, String> = mutableMapOf()) {
-            when (node) {
-                is Map<*, *> -> {
-                    val stringMap = node.mapKeys { it.key.toString() }
-                        .mapValues { it.value }
-
+        fun traverse(current: com.fasterxml.jackson.databind.JsonNode, context: MutableMap<String, String> = mutableMapOf()) {
+            when {
+                current.isObject -> {
                     val newContext = context.toMutableMap()
 
-                    for ((key, value) in stringMap) {
-                        when (value) {
-                            is String -> {
-                                if (value.startsWith("http://") || value.startsWith("https://")) {
-                                    val keyLower = key.lowercase()
+                    for (field in current.fields()) {
+                        val key = field.key
+                        val value = field.value
+                        val keyLower = key.lowercase()
+
+                        when {
+                            value.isTextual -> {
+                                val text = value.asText()
+                                if (text.startsWith("http://") || text.startsWith("https://")) {
                                     val isLinkKey = listOf("url", "href", "link", "download", "file", "stream", "source", "watch", "play", "server").any { keyLower.contains(it) }
                                     val isPathKey = listOf("season", "episode", "download", "link", "quality", "server", "source", "stream", "audio", "language", "file", "watch", "play").any { keyLower.contains(it) }
 
-                                    if ((isLinkKey || isPathKey) && !seenUrls.contains(value)) {
+                                    if ((isLinkKey || isPathKey) && !seenUrls.contains(text)) {
                                         val isImage = listOf("jpg", "jpeg", "png", "gif", "webp", "svg", "avif").any { ext ->
-                                            value.lowercase().contains(".$ext") || value.lowercase().contains(".$ext?")
+                                            text.lowercase().contains(".$ext") || text.lowercase().contains(".$ext?")
                                         }
-                                        val isTmdbImage = value.contains("image.tmdb.org")
-                                        val isSelfUrl = value.contains("xdmovies-api.hdmovielover.workers.dev")
+                                        val isTmdbImage = text.contains("image.tmdb.org")
+                                        val isSelfUrl = text.contains("xdmovies-api.hdmovielover.workers.dev")
 
                                         if (!isImage && !isTmdbImage && !isSelfUrl) {
-                                            seenUrls.add(value)
+                                            seenUrls.add(text)
                                             val labelParts = mutableListOf<String>()
                                             context["title"]?.let { labelParts.add(it) }
                                             context["quality"]?.let { labelParts.add(it) }
@@ -180,98 +341,81 @@ class XDMoviesProvider : MainAPI() {
                                             labelParts.add(humanizeKey(key))
 
                                             links.add(
-                                                ExtractorLink(
-                                                    source = name,
+                                                StreamLink(
                                                     name = labelParts.joinToString(" | ").takeIf { it.isNotBlank() } ?: "Download",
-                                                    url = value,
-                                                    referer = "",
-                                                    quality = Qualities.P1080.value,
-                                                    type = INFER_TYPE
+                                                    url = text
                                                 )
                                             )
                                         }
                                     }
                                 } else {
-                                    val keyLower = key.lowercase()
                                     if (listOf("title", "name", "quality", "resolution", "language", "languages", "season", "episode", "size").any { keyLower.contains(it) }) {
-                                        newContext[keyLower] = value
+                                        newContext[keyLower] = text
                                     }
                                 }
                             }
-                            is List<*> -> {
-                                val keyLower = key.lowercase()
+                            value.isArray -> {
                                 val isPathKey = listOf("season", "episode", "download", "link", "quality", "server", "source", "stream", "audio", "language", "file", "watch", "play").any { keyLower.contains(it) }
                                 if (isPathKey) {
                                     val listContext = context.toMutableMap()
                                     listContext["section"] = humanizeKey(key)
-                                    for (listItem in value) {
-                                        if (listItem is String && (listItem.startsWith("http://") || listItem.startsWith("https://"))) {
-                                            if (!seenUrls.contains(listItem)) {
-                                                seenUrls.add(listItem)
+                                    for (elem in value) {
+                                        if (elem.isTextual) {
+                                            val text = elem.asText()
+                                            if ((text.startsWith("http://") || text.startsWith("https://")) && !seenUrls.contains(text)) {
+                                                seenUrls.add(text)
                                                 val labelParts = mutableListOf<String>()
                                                 context["title"]?.let { labelParts.add(it) }
                                                 context["quality"]?.let { labelParts.add(it) }
                                                 listContext["section"]?.let { labelParts.add(it) }
 
                                                 links.add(
-                                                    ExtractorLink(
-                                                        source = name,
+                                                    StreamLink(
                                                         name = labelParts.joinToString(" | ").takeIf { it.isNotBlank() } ?: "Download",
-                                                        url = listItem,
-                                                        referer = "",
-                                                        quality = Qualities.P1080.value,
-                                                        type = INFER_TYPE
+                                                        url = text
                                                     )
                                                 )
                                             }
                                         }
                                     }
                                 } else {
-                                    value.forEach { traverse(it, context.toMutableMap()) }
+                                    for (elem in value) {
+                                        traverse(elem, context.toMutableMap())
+                                    }
                                 }
                             }
-                            else -> {
-                                traverse(value, newContext)
+                            value.isObject || value.isArray -> {
+                                val childContext = newContext.toMutableMap()
+                                if (listOf("season", "episode", "download", "link", "quality", "server", "source", "stream", "audio", "language", "file", "watch", "play").any { keyLower.contains(it) }) {
+                                    childContext["section"] = humanizeKey(key)
+                                }
+                                traverse(value, childContext)
                             }
-                        }
-                    }
-
-                    for ((key, value) in stringMap) {
-                        if (value is Map<*, *> || value is List<*>) {
-                            val keyLower = key.lowercase()
-                            val childContext = newContext.toMutableMap()
-                            if (listOf("season", "episode", "download", "link", "quality", "server", "source", "stream", "audio", "language", "file", "watch", "play").any { keyLower.contains(it) }) {
-                                childContext["section"] = humanizeKey(key)
-                            }
-                            traverse(value, childContext)
                         }
                     }
                 }
-                is List<*> -> {
-                    for (item in node) {
-                        if (item is String && (item.startsWith("http://") || item.startsWith("https://"))) {
-                            if (!seenUrls.contains(item)) {
-                                seenUrls.add(item)
+                current.isArray -> {
+                    for (elem in current) {
+                        if (elem.isTextual) {
+                            val text = elem.asText()
+                            if ((text.startsWith("http://") || text.startsWith("https://")) && !seenUrls.contains(text)) {
+                                seenUrls.add(text)
                                 links.add(
-                                    ExtractorLink(
-                                        source = name,
+                                    StreamLink(
                                         name = context["title"] ?: "Download",
-                                        url = item,
-                                        referer = "",
-                                        quality = Qualities.P1080.value,
-                                        type = INFER_TYPE
+                                        url = text
                                     )
                                 )
                             }
                         } else {
-                            traverse(item, context)
+                            traverse(elem, context)
                         }
                     }
                 }
             }
         }
 
-        traverse(data)
+        traverse(node)
         return links
     }
 
@@ -282,148 +426,5 @@ class XDMoviesProvider : MainAPI() {
             .replace(Regex("\\s+"), " ")
             .trim()
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-    }
-
-    override suspend fun load(url: String): LoadResponse {
-        val data = parseJson<XDMoviesSearchData>(url)
-        val detailUrl = data.url
-        val type = data.type
-        val title = data.title
-
-        val endpoint = if (normalizeType(type) == "series") "series" else "movie"
-        val detailResponse = app.get("$mainUrl/$endpoint/details?url=${encodeUrl(detailUrl)}")
-        val detailJson = mapper.readTree(detailResponse.text)
-
-        val detailTitle = detailJson.get("title")?.asText()
-            ?: detailJson.get("name")?.asText()
-            ?: detailJson.get("movieTitle")?.asText()
-            ?: detailJson.get("seriesTitle")?.asText()
-            ?: title
-
-        val posterUrl = detailJson.get("image_url")?.asText()
-            ?: detailJson.get("poster")?.asText()
-            ?: detailJson.get("poster_url")?.asText()
-
-        val plot = detailJson.get("description")?.asText()
-            ?: detailJson.get("plot")?.asText()
-            ?: detailJson.get("overview")?.asText()
-
-        val year = detailJson.get("year")?.asInt()
-        val rating = detailJson.get("rating")?.asText()?.toRatingInt()
-        val duration = detailJson.get("duration")?.asText()
-        val trailer = detailJson.get("trailer_url")?.asText()
-            ?: detailJson.get("trailer")?.asText()
-
-        val tags = mutableListOf<String>()
-        val cast = mutableListOf<String>()
-
-        detailJson.get("genre")?.asText()?.let { tags.addAll(it.split(",").map { g -> g.trim() }) }
-        detailJson.get("cast")?.asText()?.let { cast.addAll(it.split(",").map { c -> c.trim() }) }
-
-        if (normalizeType(type) == "movie") {
-            return newMovieLoadResponse(
-                name = detailTitle,
-                dataUrl = url,
-                type = TvType.Movie,
-                dataUrl
-            ) {
-                this.posterUrl = posterUrl
-                this.year = year
-                this.plot = plot
-                this.rating = rating
-                this.duration = duration
-                this.tags = tags
-                addTrailer(trailer)
-            }
-        } else {
-            val episodes = mutableListOf<Episode>()
-
-            val seasons = detailJson.get("seasons")
-            if (seasons != null && seasons.isArray) {
-                for (seasonNode in seasons) {
-                    val seasonNum = seasonNode.get("season")?.asInt()
-                        ?: seasonNode.get("season_number")?.asInt()
-                        ?: 1
-
-                    val episodeList = seasonNode.get("episodes")
-                    if (episodeList != null && episodeList.isArray) {
-                        for (epNode in episodeList) {
-                            val epNum = epNode.get("episode")?.asInt()
-                                ?: epNode.get("episode_number")?.asInt()
-                                ?: 1
-
-                            val epTitle = epNode.get("title")?.asText()
-                            val epDetailUrl = epNode.get("detail_url")?.asText()
-                                ?: epNode.get("url")?.asText()
-
-                            episodes.add(
-                                newEpisode(
-                                    XDMoviesSearchData(
-                                        epDetailUrl ?: detailUrl,
-                                        "series",
-                                        "$detailTitle S${seasonNum}E${epNum}"
-                                    ).toJson()
-                                ) {
-                                    this.name = epTitle
-                                    this.season = seasonNum
-                                    this.episode = epNum
-                                }
-                            )
-                        }
-                    } else {
-                        episodes.add(
-                            newEpisode(
-                                XDMoviesSearchData(detailUrl, "series", "$detailTitle Season $seasonNum").toJson()
-                            ) {
-                                this.season = seasonNum
-                            }
-                        )
-                    }
-                }
-            } else {
-                episodes.add(
-                    newEpisode(url)
-                )
-            }
-
-            return newTvSeriesLoadResponse(
-                name = detailTitle,
-                dataUrl = url,
-                type = TvType.TvSeries,
-                episodes
-            ) {
-                this.posterUrl = posterUrl
-                this.year = year
-                this.plot = plot
-                this.rating = rating
-                this.tags = tags
-                addTrailer(trailer)
-            }
-        }
-    }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val searchData = parseJson<XDMoviesSearchData>(data)
-        val detailUrl = searchData.url
-        val type = searchData.type
-
-        val endpoint = if (normalizeType(type) == "series") "series" else "movie"
-        val response = app.get("$mainUrl/$endpoint/details?url=${encodeUrl(detailUrl)}")
-
-        try {
-            val jsonNode = mapper.readTree(response.text)
-            val jsonMap = mapper.convertValue(jsonNode, Map::class.java) as Map<String, Any?>
-
-            val links = extractDownloadLinks(jsonMap, detailUrl)
-            links.forEach { callback(it) }
-            return links.isNotEmpty()
-        } catch (e: Exception) {
-            return false
-        }
     }
 }
