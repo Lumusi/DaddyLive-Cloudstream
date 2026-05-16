@@ -163,7 +163,7 @@ class XDMoviesProvider : MainAPI() {
 
             val endpoint = if (normalizeType(type) == "series") "series" else "movie"
             val detailResponse = withContext(Dispatchers.IO) {
-                app.get("$mainUrl/$endpoint/details?url=${encodeUrl(detailUrl)}")
+                app.get("$mainUrl/$endpoint/details?url=${java.net.URLEncoder.encode(detailUrl, "UTF-8")}")
             }
             val detailJson = mapper.readTree(detailResponse.text)
 
@@ -182,7 +182,8 @@ class XDMoviesProvider : MainAPI() {
                 ?: detailJson.get("overview")?.asText()
 
             val year = detailJson.get("year")?.asInt()
-            val rating = detailJson.get("rating")?.asText()?.toRatingInt()
+            val ratingStr = detailJson.get("rating")?.asText()
+            val score = ratingStr?.toFloatOrNull()?.let { if (it > 10) it / 10f else it }
             val duration = detailJson.get("duration")?.asText()
             val trailer = detailJson.get("trailer_url")?.asText()
                 ?: detailJson.get("trailer")?.asText()
@@ -195,8 +196,8 @@ class XDMoviesProvider : MainAPI() {
                     this.posterUrl = posterUrl
                     this.year = year
                     this.plot = plot
-                    this.rating = rating
-                    addDuration(duration)
+                    this.score = score
+                    this.duration = duration?.toIntOrNull()?.times(60)
                     this.tags = tags
                     addTrailer(trailer)
                 }
@@ -245,7 +246,7 @@ class XDMoviesProvider : MainAPI() {
                     this.posterUrl = posterUrl
                     this.year = year
                     this.plot = plot
-                    this.rating = rating
+                    this.score = score
                     this.tags = tags
                     addTrailer(trailer)
                 }
@@ -268,7 +269,7 @@ class XDMoviesProvider : MainAPI() {
 
             val endpoint = if (normalizeType(type) == "series") "series" else "movie"
             val response = withContext(Dispatchers.IO) {
-                app.get("$mainUrl/$endpoint/details?url=${encodeUrl(detailUrl)}")
+                app.get("$mainUrl/$endpoint/details?url=${java.net.URLEncoder.encode(detailUrl, "UTF-8")}")
             }
 
             val jsonNode = mapper.readTree(response.text)
