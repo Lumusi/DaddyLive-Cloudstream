@@ -381,26 +381,20 @@ class DamiTV : MainAPI() {
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
-        // data is now the embedUrl directly (e.g. https://pooembed.eu/embed/ufl/2026-05-15/orl-dal)
-        // Same pattern as CDNLiveTV: pass player URL through data chain
-        if (data.startsWith("https://pooembed.eu/embed/")) {
-            try {
-                loadExtractor(
-                    url = data,
-                    referer = mainUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = callback
-                )
-                return true
-            } catch (_: Exception) {
-                // Extractor failed, try fallback
+        // Try direct M3U8 first (confirmed working with proper referer)
+        if (data.contains("$mainUrl/event/") || data.startsWith("https://pooembed.eu/embed/")) {
+            // Extract matchId from either URL format
+            val matchId = if (data.contains("$mainUrl/event/")) {
+                data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
+            } else {
+                // Parse from embedUrl: https://pooembed.eu/embed/{category}/{date}/{slug}
+                data.removePrefix("https://pooembed.eu/embed/").substringBefore("?").substringBefore("#")
             }
-        }
 
-        // Fallback: event URL without embedUrl — try direct M3U8
-        if (data.contains("$mainUrl/event/")) {
-            val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
             val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
+            val encodedUrl = java.net.URLEncoder.encode("/live-hls/channel/$matchId/playlist.m3u8", "UTF-8")
+            val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
+
             try {
                 val wrapped = newExtractorLink(
                     source = name,
@@ -408,18 +402,37 @@ class DamiTV : MainAPI() {
                     url = streamUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
-                    this.referer = "$mainUrl/"
+                    this.referer = playerReferer
                     this.quality = Qualities.Unknown.value
                     this.headers = mapOf(
-                        "User-Agent" to headers["User-Agent"]!!,
-                        "Referer" to mainUrl,
-                        "Accept" to "*/*"
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+                        "Referer" to playerReferer,
+                        "Accept" to "*/*",
+                        "Origin" to mainUrl,
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "same-origin"
                     )
                 }
                 callback(wrapped)
                 return true
             } catch (_: Exception) {
-                return false
+                // Fallback to WebView extractor
+            }
+
+            // WebView extractor fallback
+            if (data.startsWith("https://pooembed.eu/embed/")) {
+                try {
+                    loadExtractor(
+                        url = data,
+                        referer = mainUrl,
+                        subtitleCallback = subtitleCallback,
+                        callback = callback
+                    )
+                    return true
+                } catch (_: Exception) {
+                    return false
+                }
             }
         }
 
