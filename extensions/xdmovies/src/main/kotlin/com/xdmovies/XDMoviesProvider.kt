@@ -183,7 +183,7 @@ class XDMoviesProvider : MainAPI() {
 
             val year = detailJson.get("year")?.asInt()
             val ratingStr = detailJson.get("rating")?.asText()
-            val score = ratingStr?.toFloatOrNull()?.let { if (it > 10) it / 10f else it }
+            val score = Score.from10(ratingStr?.toFloatOrNull())
             val duration = detailJson.get("duration")?.asText()
             val trailer = detailJson.get("trailer_url")?.asText()
                 ?: detailJson.get("trailer")?.asText()
