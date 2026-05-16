@@ -312,7 +312,11 @@ class DamiTV : MainAPI() {
                 match.viewers?.let { if (it > 0) appendLine("\uD83D\uDC65 Viewers: $it") }
             }
 
-            newMovieLoadResponse(title, url, TvType.Live, url) {
+            // Pass embedUrl as dataUrl for loadLinks (same pattern as CDNLiveTV)
+            val dataUrl = match.embedUrl?.takeIf { it.isNotBlank() }
+                ?: "$mainUrl/event/$matchId"
+
+            newMovieLoadResponse(title, url, TvType.Live, dataUrl) {
                 this.posterUrl = resolvePoster(match.poster)
                 this.posterHeaders = posterHeaders
                 this.plot = desc.trim()
@@ -377,16 +381,12 @@ class DamiTV : MainAPI() {
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
-        val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
-        val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
-        val match = matches.find { it.id == matchId } ?: return false
-
-        // Use embedUrl with WebView extractor (format: https://pooembed.eu/embed/{category}/{date}/{slug})
-        val embedUrl = match.embedUrl
-        if (!embedUrl.isNullOrBlank()) {
+        // data is now the embedUrl directly (e.g. https://pooembed.eu/embed/ufl/2026-05-15/orl-dal)
+        // Same pattern as CDNLiveTV: pass player URL through data chain
+        if (data.startsWith("https://pooembed.eu/embed/")) {
             try {
                 loadExtractor(
-                    url = embedUrl,
+                    url = data,
                     referer = mainUrl,
                     subtitleCallback = subtitleCallback,
                     callback = callback
@@ -397,28 +397,33 @@ class DamiTV : MainAPI() {
             }
         }
 
-        // Fallback: try direct M3U8 URL
-        val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
-        try {
-            val wrapped = newExtractorLink(
-                source = name,
-                name = match.league?.let { "$it HLS" } ?: "Event HLS",
-                url = streamUrl,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = "$mainUrl/"
-                this.quality = Qualities.Unknown.value
-                this.headers = mapOf(
-                    "User-Agent" to headers["User-Agent"]!!,
-                    "Referer" to mainUrl,
-                    "Accept" to "*/*"
-                )
+        // Fallback: event URL without embedUrl — try direct M3U8
+        if (data.contains("$mainUrl/event/")) {
+            val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
+            val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
+            try {
+                val wrapped = newExtractorLink(
+                    source = name,
+                    name = "Event HLS",
+                    url = streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.quality = Qualities.Unknown.value
+                    this.headers = mapOf(
+                        "User-Agent" to headers["User-Agent"]!!,
+                        "Referer" to mainUrl,
+                        "Accept" to "*/*"
+                    )
+                }
+                callback(wrapped)
+                return true
+            } catch (_: Exception) {
+                return false
             }
-            callback(wrapped)
-            return true
-        } catch (_: Exception) {
-            return false
         }
+
+        return false
     }
 
     // ──────────────────────────────────────────────────────────────────────────
