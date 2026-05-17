@@ -1435,31 +1435,39 @@ object CineStreamExtractors {
         callback: (ExtractorLink) -> Unit
     ) {
         if (id == null) return
-        val searchDoc = app.get("$hindMoviezAPI/?s=$id", timeout = 5000L).document
+        
+        val searchDoc = try { app.get("$hindMoviezAPI/?s=$id", timeout = 5000L).document } catch (_: Exception) { return }
         val detailUrls = searchDoc.select("h2.entry-title > a")
             .mapNotNull { it.attr("href").takeIf(String::isNotBlank) }
             .distinct()
-        
         if (detailUrls.isEmpty()) return
         
         detailUrls.safeAmap { detailUrl ->
-            val detailDoc = app.get(detailUrl, timeout = 5000L).document
+            val detailDoc = try { app.get(detailUrl, timeout = 5000L).document } catch (_: Exception) { return@safeAmap }
             
-            // Find ALL maxbutton links (quality/download variants)
             val maxButtons = detailDoc.select("a.maxbutton")
                 .mapNotNull { it.attr("href").takeIf(String::isNotBlank) }
                 .distinct()
-            
             if (maxButtons.isEmpty()) return@safeAmap
             
-            maxButtons.safeAmap { buttonUrl ->
-                if (episode != null) {
-                    // TV show path: maxbutton -> mvlink.blog/web/{ID} -> episode list
-                    if (!buttonUrl.contains("/web/")) return@safeAmap
-                    
+            if (episode != null) {
+                // TV show: filter /web/ links to matching season by checking page title
+                val seasonLinks = maxButtons.filter { it.contains("/web/") }
+                
+                // Fetch each /web/ page to check its title for season matching
+                val matchedSeasonLinks = seasonLinks.filter { link ->
+                    try {
+                        val titleDoc = app.get(link, timeout = 5000L).document
+                        val pageTitle = titleDoc.title().lowercase()
+                        pageTitle.contains("s${season.toString().padStart(2, '0')}") ||
+                        pageTitle.contains("season $season")
+                    } catch (_: Exception) { false }
+                }
+                
+                // Process ALL matched season quality variants in parallel
+                matchedSeasonLinks.safeAmap { buttonUrl ->
                     val pageDoc = try { app.get(buttonUrl, timeout = 5000L).document } catch (_: Exception) { return@safeAmap }
                     
-                    // Find episode by text matching "Episode N"
                     val epRegex = Regex("Episode\\s+0*$episode(?:\\s|\\)|\\(|$)", RegexOption.IGNORE_CASE)
                     val episodeLink = pageDoc.select("h3 a").firstOrNull { a ->
                         epRegex.containsMatchIn(a.text())
@@ -1470,15 +1478,13 @@ object CineStreamExtractors {
                     
                     val signedUrl = hindmoviezsignHShare(rawId, "https://hshare.ink")
                     getHindMoviezLinks("Hindmoviez", signedUrl, subtitleCallback, callback)
-                    
-                } else {
-                    // Movie path: maxbutton -> mvlink.blog/{ID}
-                    // Note: mvlink.blog/{ID} currently returns 404 for most movies
+                }
+                
+            } else {
+                // Movie path
+                maxButtons.safeAmap { buttonUrl ->
                     val pageDoc = try { app.get(buttonUrl, timeout = 5000L).document } catch (_: Exception) { return@safeAmap }
-                    
-                    // Get hshare.ink links from the page
                     val hshareLinks = pageDoc.select("a[href*='hshare.ink']")
-                    
                     if (hshareLinks.isEmpty()) return@safeAmap
                     
                     hshareLinks.safeAmap { a ->
