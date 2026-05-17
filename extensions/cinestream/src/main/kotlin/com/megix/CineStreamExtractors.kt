@@ -2421,8 +2421,14 @@ object CineStreamExtractors {
         val searchUrl = "$zinkmoviesAPI/?s=${URLEncoder.encode(title, "UTF-8")}"
         val searchDoc = app.get(searchUrl).document
         
-        // More flexible movie/series detection
-        val matchUrls = searchDoc.select("article a[href*='/movies/'], article a[href*='/tv/']")
+        // Filter search results: movies (/movies/) or TV shows (/tvshows/ via /tv/ match)
+        // When season+episode are provided, only search TV show pages
+        val searchSelector = if (season != null && episode != null)
+            "article a[href*='/tv/']" 
+        else
+            "article a[href*='/movies/'], article a[href*='/tv/']"
+        
+        val matchUrls = searchDoc.select(searchSelector)
             .filter { a ->
                 a.text().contains(title, ignoreCase = true)
             }
@@ -2453,15 +2459,21 @@ object CineStreamExtractors {
                 
                 val seasonDoc = try { app.get(seasonLink).document } catch (_: Exception) { return@safeAmap }
                 
-                val episodeLinks = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
-                    .map { it.attr("href") }
+                // Find the specific episode link on the season page matching the app's episode number
+                // Format: "EPISODE - 01 (239.25 MB)" or similar
+                val allEpisodeLinks = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
                 
-                if (episodeLinks.isNotEmpty()) {
-                    episodeLinks.safeAmap { zinkUrl ->
-                        // Try each zinkcloud file link (exact episode match or fallback)
-                        getZinkLinks(zinkUrl, subtitleCallback, callback)
-                    }
+                val episodeUrl = allEpisodeLinks.firstOrNull { a ->
+                    a.text().contains(Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE))
+                }?.attr("href") ?: run {
+                    // Fallback: first link that isn't "All Episodes Zip"
+                    allEpisodeLinks.firstOrNull { a ->
+                        !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
+                    }?.attr("href") ?: return@safeAmap
                 }
+                
+                // Process through same pipeline as movies (file -> token -> dl -> servers)
+                getZinkLinks(episodeUrl, subtitleCallback, callback)
             }
         }
     }
