@@ -374,36 +374,36 @@ class DamiTV : MainAPI() {
 
             var foundAny = false
             for ((qualityLabel, streamUrl) in qualityUrls) {
-                // Try to convert /cdn-stream/ URLs to /live-hls/ URLs for live playback
-                // /cdn-stream/ serves VOD-style playlists with #EXT-X-ENDLIST
-                // /live-hls/ serves true live playlists that continuously refresh
-                val liveStreamUrl = if (streamUrl.contains("/cdn-stream/")) {
-                    val pathPart = streamUrl.removePrefix("$mainUrl/cdn-stream/")
-                    "$mainUrl/live-hls/channel/$pathPart/playlist.m3u8"
-                } else {
-                    streamUrl
-                }
-
-                val encodedUrl = java.net.URLEncoder.encode(liveStreamUrl.removePrefix("$mainUrl"), "UTF-8")
-                val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
+                // Use the player page URL with WebView extraction to get the actual m3u8
+                // The player page fetches a different HLS URL than the direct /cdn-stream/ endpoint
+                val encodedUrl = java.net.URLEncoder.encode(streamUrl.removePrefix("$mainUrl"), "UTF-8")
+                val playerPageUrl = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=${java.net.URLEncoder.encode(channel.name ?: "Live", "UTF-8")}"
 
                 try {
-                    val wrapped = newExtractorLink(
-                        source = name,
-                        name = "$qualityLabel ${channel.name ?: "Channel"}",
-                        url = liveStreamUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = playerReferer
-                        this.quality = when (qualityLabel.uppercase()) {
-                            "HD", "720" -> 720
-                            "FHD", "1080" -> 1080
-                            "4K", "2160" -> 2160
-                            "SD", "480" -> 480
-                            else -> Qualities.Unknown.value
+                    loadExtractor(
+                        url = playerPageUrl,
+                        referer = mainUrl,
+                        subtitleCallback = subtitleCallback,
+                        callback = { link ->
+                            val wrapped = newExtractorLink(
+                                source = "$qualityLabel ${channel.name ?: "Channel"}",
+                                name = "$qualityLabel ${channel.name ?: "Channel"}",
+                                url = link.url,
+                                type = link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = when (qualityLabel.uppercase()) {
+                                    "HD", "720" -> 720
+                                    "FHD", "1080" -> 1080
+                                    "4K", "2160" -> 2160
+                                    "SD", "480" -> 480
+                                    else -> Qualities.Unknown.value
+                                }
+                                this.headers = link.headers
+                            }
+                            callback(wrapped)
                         }
-                    }
-                    callback(wrapped)
+                    )
                     foundAny = true
                 } catch (_: Exception) { /* skip failed quality */ }
             }
