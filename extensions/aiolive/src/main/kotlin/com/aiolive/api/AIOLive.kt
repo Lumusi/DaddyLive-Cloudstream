@@ -47,6 +47,19 @@ class AIOLive : MainAPI() {
             "Referer" to "https://cdnlivetv.tv/"
         )
 
+        val cdnStreamingHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Accept" to "*/*",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Origin" to "https://cdnlivetv.tv",
+            "Referer" to "https://cdnlivetv.tv/",
+            "Connection" to "keep-alive",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site"
+        )
+
         @Volatile private var cachedDamiMatches: List<ApiMatch>? = null
         @Volatile private var damiMatchesCacheTimestamp: Long = 0
         @Volatile private var cachedDamiChannels: List<ApiChannel>? = null
@@ -752,7 +765,9 @@ class AIOLive : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val gameID = url.substringAfterLast("/").substringBefore("?")
+        val pathBeforeQuery = url.substringBefore("?")
+        val gameID = pathBeforeQuery.substringAfterLast("/").takeIf { it.isNotBlank() }
+            ?: return false
         val sport = url.substringAfter("sport=", "").substringBefore("&").takeIf { it.isNotBlank() }
             ?: return false
 
@@ -765,6 +780,7 @@ class AIOLive : MainAPI() {
         val event = matchingSport.find { it.gameID == gameID } ?: return false
         val channels = event.channels?.filter { it.channelName?.isNotBlank() == true } ?: return false
 
+        var foundAny = false
         for (ch in channels) {
             try {
                 val chName = ch.channelName ?: continue
@@ -774,14 +790,31 @@ class AIOLive : MainAPI() {
                     ?: ch.channelCode?.uppercase()
                     ?: "Unknown"
                 val sourceLabel = if (chName.isNotBlank()) "$chName ($countryName)" else countryName
-                val sourceUrl = buildCdnPlayerUrl(chName, chCode)
 
-                loadExtractor(
-                    url = sourceUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = { link ->
-                        val wrapped = runBlocking {
-                            newExtractorLink(
+                val directUrl = ch.url?.takeIf { it.isNotBlank() }
+
+                if (directUrl != null) {
+                    callback.invoke(
+                        newExtractorLink(
+                            source = "$name [$sourceLabel]",
+                            name = "Direct [$sourceLabel]",
+                            url = directUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.quality = Qualities.Unknown.value
+                            this.referer = "$CDN_PLAYER_URL/"
+                            this.headers = cdnStreamingHeaders
+                        }
+                    )
+                    foundAny = true
+                } else {
+                    // Fallback: CDN player page + WebView extraction
+                    val sourceUrl = buildCdnPlayerUrl(chName, chCode)
+                    loadExtractor(
+                        url = sourceUrl,
+                        subtitleCallback = subtitleCallback,
+                        callback = { link ->
+                            val wrapped = newExtractorLink(
                                 source = "${link.source} [$sourceLabel]",
                                 name = "${link.name} [$sourceLabel]",
                                 url = link.url,
@@ -791,14 +824,15 @@ class AIOLive : MainAPI() {
                                 this.quality = link.quality
                                 this.headers = link.headers
                             }
+                            callback(wrapped)
                         }
-                        callback(wrapped)
-                    }
-                )
+                    )
+                    foundAny = true
+                }
             } catch (_: Exception) { }
         }
 
-        return true
+        return foundAny
     }
 
     private suspend fun loadCdnChannelLinks(
@@ -832,14 +866,30 @@ class AIOLive : MainAPI() {
                 val chName = ch.name ?: continue
                 val chCode = ch.code ?: "us"
                 val sourceLabel = cdnCodeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
-                val sourceUrl = buildCdnPlayerUrl(chName, chCode)
 
-                loadExtractor(
-                    url = sourceUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = { link ->
-                        val wrapped = runBlocking {
-                            newExtractorLink(
+                val directUrl = ch.url?.takeIf { it.isNotBlank() }
+
+                if (directUrl != null) {
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = "$sourceLabel ${chName}",
+                            url = directUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.quality = Qualities.Unknown.value
+                            this.referer = "$CDN_PLAYER_URL/"
+                            this.headers = cdnStreamingHeaders
+                        }
+                    )
+                } else {
+                    // Fallback: CDN player page + WebView extraction
+                    val sourceUrl = buildCdnPlayerUrl(chName, chCode)
+                    loadExtractor(
+                        url = sourceUrl,
+                        subtitleCallback = subtitleCallback,
+                        callback = { link ->
+                            val wrapped = newExtractorLink(
                                 source = "${link.source} [$sourceLabel]",
                                 name = "${link.name} [$sourceLabel]",
                                 url = link.url,
@@ -849,10 +899,10 @@ class AIOLive : MainAPI() {
                                 this.quality = link.quality
                                 this.headers = link.headers
                             }
+                            callback(wrapped)
                         }
-                        callback(wrapped)
-                    }
-                )
+                    )
+                }
             } catch (_: Exception) { }
         }
 

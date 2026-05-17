@@ -25,6 +25,19 @@ open class AIOLiveExtractor(context: Context) : ExtractorApi() {
             "Accept-Language" to "en-US,en;q=0.5",
             "Referer" to "https://cdnlivetv.tv/"
         )
+
+        val streamingHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "Accept" to "*/*",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Origin" to "https://cdnlivetv.tv",
+            "Referer" to "https://cdnlivetv.tv/",
+            "Connection" to "keep-alive",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site"
+        )
     }
 
     override suspend fun getUrl(
@@ -74,7 +87,7 @@ open class AIOLiveExtractor(context: Context) : ExtractorApi() {
                 ) {
                     this.quality = Qualities.Unknown.value
                     this.referer = "$mainUrl/"
-                    this.headers = refererHeaders
+                    this.headers = streamingHeaders
                 }
             )
         }
@@ -226,19 +239,6 @@ open class AIOLiveExtractor(context: Context) : ExtractorApi() {
             videoUrl.contains("360") -> "360p"
             else -> name
         }
-
-        val streamingHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
-            "Accept" to "*/*",
-            "Accept-Language" to "en-US,en;q=0.5",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Origin" to "https://cdnlivetv.tv",
-            "Referer" to "https://cdnlivetv.tv/",
-            "Connection" to "keep-alive",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site"
-        )
 
         callback.invoke(
             newExtractorLink(
