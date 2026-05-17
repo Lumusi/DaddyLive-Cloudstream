@@ -502,8 +502,12 @@ class AIOLive : MainAPI() {
                 }
             }
 
-            val dataUrl = match.embedUrl?.takeIf { it.isNotBlank() }
-                ?: "$mainUrl/event/$matchId"
+            val embedUrl = match.embedUrl?.takeIf { it.isNotBlank() }
+            val dataUrl = if (embedUrl != null) {
+                "$mainUrl/event/$matchId?embed=${java.net.URLEncoder.encode(embedUrl, "UTF-8")}"
+            } else {
+                "$mainUrl/event/$matchId"
+            }
 
             newMovieLoadResponse(title, url, TvType.Live, dataUrl) {
                 this.posterUrl = resolveDamiPoster(match.poster)
@@ -671,13 +675,9 @@ class AIOLive : MainAPI() {
         data: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val matchId = if (data.contains("$mainUrl/event/")) {
-            data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
-        } else if (data.startsWith("https://pooembed.eu/embed/")) {
-            data.removePrefix("https://pooembed.eu/embed/").substringBefore("?").substringBefore("#")
-        } else {
-            return false
-        }
+        val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
+        val embedParam = data.substringAfter("embed=", "").substringBefore("&").takeIf { it.isNotBlank() }
+        val embedUrl = embedParam?.let { java.net.URLDecoder.decode(it, "UTF-8") }
 
         val matches = try { fetchDamiMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId }
@@ -727,18 +727,16 @@ class AIOLive : MainAPI() {
             return true
         } catch (_: Exception) { }
 
-        if (data.startsWith("https://pooembed.eu/embed/")) {
+        if (!embedUrl.isNullOrBlank()) {
             try {
                 loadExtractor(
-                    url = data,
+                    url = embedUrl,
                     referer = mainUrl,
                     subtitleCallback = { },
                     callback = callback
                 )
                 return true
-            } catch (_: Exception) {
-                return false
-            }
+            } catch (_: Exception) { }
         }
 
         return false

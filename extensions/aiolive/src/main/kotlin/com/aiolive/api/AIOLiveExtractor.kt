@@ -148,8 +148,6 @@ open class AIOLiveExtractor(context: Context) : ExtractorApi() {
                                 if (!captured.get() && (
                                     reqUrl.endsWith(".m3u8", ignoreCase = true) ||
                                     reqUrl.endsWith(".ms3", ignoreCase = true) ||
-                                    reqUrl.contains("/m3u8/", ignoreCase = true) ||
-                                    (reqUrl.contains("m3u8", ignoreCase = true) && reqUrl.contains("http")) ||
                                     (reqUrl.contains("/secure/api/v1/") && reqUrl.contains("playlist"))
                                 )) {
                                     if (captured.compareAndSet(false, true)) {
