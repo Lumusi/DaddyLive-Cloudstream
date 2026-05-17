@@ -670,20 +670,31 @@ suspend fun getHindMoviezLinks(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ) {
-    // Follow signed r.php -> f.php page
-    val doc = app.get(signedUrl).document
+    // Step 1: Follow signed r.php -> f.php (manually handle redirect)
+    val rResponse = app.get(signedUrl, allowRedirects = false)
+    val fphpUrl = if (rResponse.code == 302) {
+        val loc = rResponse.headers["Location"] ?: return
+        if (loc.startsWith("http")) loc else "https://hshare.ink/$loc"
+    } else return
+    
+    val doc = app.get(fphpUrl, referer = "https://hindmovie.ltd/").document
     val name = doc.select("div.container p:contains(Name:)").text().substringAfter("Name: ")
     val fileSize = doc.select("div.container p:contains(Size:)").text().substringAfter("Size: ")
     val simplifiedTitle = getSimplifiedTitle(name + fileSize)
 
-    // Find the HPage button -> hcloud.ink/redirect.php
+    // Step 2: Extract HPage button, follow redirects manually
     val hpageUrl = doc.select("a.btn-info").attr("href")
     if (hpageUrl.isBlank()) return
 
-    // Follow HPage redirect to get the direct/index.php page with worker URLs
-    val directDoc = app.get(hpageUrl, referer = "https://hshare.ink/").document
+    val hpageResponse = app.get(hpageUrl, referer = "https://hshare.ink/", allowRedirects = false)
+    val directUrl = if (hpageResponse.code == 302) {
+        val loc = hpageResponse.headers["Location"] ?: return
+        if (loc.startsWith("http")) loc else "https://hcloud.ink$loc"
+    } else return
 
-    // Extract all a.button Worker download URLs
+    val directDoc = app.get(directUrl, referer = "https://hshare.ink/").document
+
+    // Step 3: Extract all a.button Worker download URLs
     directDoc.select("a.button").safeAmap {
         val workerUrl = it.attr("href")
         if (workerUrl.isNotBlank()) {
