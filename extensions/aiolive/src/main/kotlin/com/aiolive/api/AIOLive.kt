@@ -793,42 +793,26 @@ class AIOLive : MainAPI() {
 
                 val directUrl = ch.url?.takeIf { it.isNotBlank() }
 
-                if (directUrl != null) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = "$name [$sourceLabel]",
-                            name = "Direct [$sourceLabel]",
-                            url = directUrl,
-                            type = ExtractorLinkType.M3U8
+                val targetUrl = directUrl ?: buildCdnPlayerUrl(chName, chCode)
+                loadExtractor(
+                    url = targetUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = { link ->
+                        val wrapped = newExtractorLink(
+                            source = "${link.source} [$sourceLabel]",
+                            name = "${link.name} [$sourceLabel]",
+                            url = link.url,
+                            type = link.type
                         ) {
-                            this.quality = Qualities.Unknown.value
-                            this.referer = "$CDN_PLAYER_URL/"
-                            this.headers = cdnStreamingHeaders
+                            this.referer = link.referer
+                            this.quality = link.quality
+                            this.headers = link.headers
                         }
-                    )
-                    foundAny = true
-                } else {
-                    // Fallback: CDN player page + WebView extraction
-                    val sourceUrl = buildCdnPlayerUrl(chName, chCode)
-                    loadExtractor(
-                        url = sourceUrl,
-                        subtitleCallback = subtitleCallback,
-                        callback = { link ->
-                            val wrapped = newExtractorLink(
-                                source = "${link.source} [$sourceLabel]",
-                                name = "${link.name} [$sourceLabel]",
-                                url = link.url,
-                                type = link.type
-                            ) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                                this.headers = link.headers
-                            }
-                            callback(wrapped)
-                        }
-                    )
-                    foundAny = true
-                }
+                        callback(wrapped)
+                    }
+                )
+                foundAny = true
+
             } catch (_: Exception) { }
         }
 
@@ -861,6 +845,7 @@ class AIOLive : MainAPI() {
             }
         }
 
+        var foundAny = false
         for (ch in matches) {
             try {
                 val chName = ch.name ?: continue
@@ -868,44 +853,29 @@ class AIOLive : MainAPI() {
                 val sourceLabel = cdnCodeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
 
                 val directUrl = ch.url?.takeIf { it.isNotBlank() }
+                val targetUrl = directUrl ?: buildCdnPlayerUrl(chName, chCode)
 
-                if (directUrl != null) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$sourceLabel ${chName}",
-                            url = directUrl,
-                            type = ExtractorLinkType.M3U8
+                loadExtractor(
+                    url = targetUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = { link ->
+                        val wrapped = newExtractorLink(
+                            source = "${link.source} [$sourceLabel]",
+                            name = "${link.name} $chName",
+                            url = link.url,
+                            type = link.type
                         ) {
-                            this.quality = Qualities.Unknown.value
-                            this.referer = "$CDN_PLAYER_URL/"
-                            this.headers = cdnStreamingHeaders
+                            this.referer = link.referer
+                            this.quality = link.quality
+                            this.headers = link.headers
                         }
-                    )
-                } else {
-                    // Fallback: CDN player page + WebView extraction
-                    val sourceUrl = buildCdnPlayerUrl(chName, chCode)
-                    loadExtractor(
-                        url = sourceUrl,
-                        subtitleCallback = subtitleCallback,
-                        callback = { link ->
-                            val wrapped = newExtractorLink(
-                                source = "${link.source} [$sourceLabel]",
-                                name = "${link.name} [$sourceLabel]",
-                                url = link.url,
-                                type = link.type
-                            ) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                                this.headers = link.headers
-                            }
-                            callback(wrapped)
-                        }
-                    )
-                }
+                        callback(wrapped)
+                    }
+                )
+                foundAny = true
             } catch (_: Exception) { }
         }
-
+        return foundAny
         return true
     }
 
