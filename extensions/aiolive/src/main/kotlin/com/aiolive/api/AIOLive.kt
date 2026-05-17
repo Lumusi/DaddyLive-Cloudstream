@@ -613,7 +613,7 @@ class AIOLive : MainAPI() {
     ): Boolean {
         return when {
             data.contains("$mainUrl/channel/") -> loadDamiChannelLinks(data, callback)
-            data.contains("$mainUrl/event/") -> loadDamiEventLinks(data, callback)
+            data.contains("$mainUrl/event/") -> loadDamiEventLinks(data, subtitleCallback, callback)
             data.contains("$CDN_PLAYER_URL/event/watch/") -> loadCdnEventLinks(data, subtitleCallback, callback)
             else -> loadCdnChannelLinks(data, subtitleCallback, callback)
         }
@@ -673,12 +673,28 @@ class AIOLive : MainAPI() {
 
     private suspend fun loadDamiEventLinks(
         data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val matchId = data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
         val embedParam = data.substringAfter("embed=", "").substringBefore("&").takeIf { it.isNotBlank() }
         val embedUrl = embedParam?.let { java.net.URLDecoder.decode(it, "UTF-8") }
 
+        // Primary: Use embed URL with loadExtractor (like Streamed approach)
+        // Embed sites serve true live HLS playlists without #EXT-X-ENDLIST
+        if (!embedUrl.isNullOrBlank()) {
+            try {
+                loadExtractor(
+                    url = embedUrl,
+                    referer = mainUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+                return true
+            } catch (_: Exception) { }
+        }
+
+        // Fallback: Direct HLS URLs from DamiTV CDN (may have #EXT-X-ENDLIST)
         val matches = try { fetchDamiMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId }
 
@@ -726,18 +742,6 @@ class AIOLive : MainAPI() {
             callback(wrapped)
             return true
         } catch (_: Exception) { }
-
-        if (!embedUrl.isNullOrBlank()) {
-            try {
-                loadExtractor(
-                    url = embedUrl,
-                    referer = mainUrl,
-                    subtitleCallback = { },
-                    callback = callback
-                )
-                return true
-            } catch (_: Exception) { }
-        }
 
         return false
     }

@@ -401,15 +401,28 @@ class DamiTV : MainAPI() {
         }
 
         // ── Event stream ──────────────────────────────────────────────────────
-        // Extract matchId from either URL format
+        // Primary: Use embed URL with loadExtractor (like Streamed approach)
+        // Embed sites serve true live HLS playlists without #EXT-X-ENDLIST
+        if (data.startsWith("https://pooembed.eu/embed/")) {
+            try {
+                loadExtractor(
+                    url = data,
+                    referer = mainUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback
+                )
+                return true
+            } catch (_: Exception) { }
+        }
+
+        // Extract matchId from event URL
         val matchId = if (data.contains("$mainUrl/event/")) {
             data.removePrefix("$mainUrl/event/").substringBefore("?").substringBefore("#")
-        } else if (data.startsWith("https://pooembed.eu/embed/")) {
-            data.removePrefix("https://pooembed.eu/embed/").substringBefore("?").substringBefore("#")
         } else {
             return false
         }
 
+        // Fallback: Direct HLS URLs from DamiTV CDN (may have #EXT-X-ENDLIST)
         // Fetch match to check for multiple sources
         val matches = try { fetchAllMatches() } catch (_: Exception) { return false }
         val match = matches.find { it.id == matchId }
@@ -459,23 +472,7 @@ class DamiTV : MainAPI() {
             }
             callback(wrapped)
             return true
-        } catch (_: Exception) {
-            // Fallback to WebView extractor
-        }
-
-        if (data.startsWith("https://pooembed.eu/embed/")) {
-            try {
-                loadExtractor(
-                    url = data,
-                    referer = mainUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = callback
-                )
-                return true
-            } catch (_: Exception) {
-                return false
-            }
-        }
+        } catch (_: Exception) { }
 
         return false
     }
