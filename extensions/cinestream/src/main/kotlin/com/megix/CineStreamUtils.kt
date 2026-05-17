@@ -670,16 +670,38 @@ suspend fun getHindMoviezLinks(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ) {
+    // Follow signed r.php -> f.php page
     val doc = app.get(signedUrl).document
     val name = doc.select("div.container p:contains(Name:)").text().substringAfter("Name: ")
     val fileSize = doc.select("div.container p:contains(Size:)").text().substringAfter("Size: ")
     val simplifiedTitle = getSimplifiedTitle(name + fileSize)
 
-    // Extract all mirror download buttons directly from f.php page
-    doc.select("a.btn-success, a.btn-info, a.btn-warning, a.btn-danger, a.btn-primary").safeAmap {
-        val mirrorUrl = it.attr("href")
-        if (mirrorUrl.isNotBlank()) {
-            loadSourceNameExtractor(source, mirrorUrl, "", subtitleCallback, callback)
+    // Find the HPage button -> hcloud.ink/redirect.php
+    val hpageUrl = doc.select("a.btn-info").attr("href")
+    if (hpageUrl.isBlank()) return
+
+    // Follow HPage redirect to get the direct/index.php page with worker URLs
+    val directDoc = app.get(hpageUrl, referer = "https://hshare.ink/").document
+
+    // Extract all a.button Worker download URLs
+    directDoc.select("a.button").safeAmap {
+        val workerUrl = it.attr("href")
+        if (workerUrl.isNotBlank()) {
+            callback.invoke(
+                newExtractorLink(
+                    source,
+                    "Hindmoviez $simplifiedTitle $fileSize",
+                    workerUrl,
+                    ExtractorLinkType.VIDEO
+                ) {
+                    this.quality = getIndexQuality(name)
+                    this.referer = "https://hshare.ink/"
+                    this.headers = mapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to "https://hshare.ink/"
+                    )
+                }
+            )
         }
     }
 }
