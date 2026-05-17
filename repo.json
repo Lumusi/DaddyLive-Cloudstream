@@ -1,7 +1,7 @@
 {
-  "iconUrl": "https://cdnlivetv.tv/wp-content/uploads/2024/01/cropped-icon.png",
-  "name": "CDNLiveTV",
-  "description": "Live sports streaming extension for CDNLiveTV (cdnlivetv.tv) — 762+ global channels & live events",
+  "iconUrl": "https://i.imgur.com/FetkA0F.png",
+  "name": "AIOLive",
+  "description": "All-in-one live sports & TV — events from DamiTV + 762+ channels from CDNLiveTV",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/Lumusi/DaddyLive-Cloudstream/builds/plugins.json"

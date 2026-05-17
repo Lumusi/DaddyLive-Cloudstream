@@ -1,4 +1,4 @@
-# CDNLiveTV & DamiTV Cloudstream Extensions
+# CDNLiveTV, DamiTV & AIOLive Cloudstream Extensions
 
 Multi-extension Cloudstream3 repository for live sports streaming.
 
@@ -6,8 +6,20 @@ Multi-extension Cloudstream3 repository for live sports streaming.
 
 | Extension | Package | Source | Type |
 |-----------|---------|--------|------|
+| **AIOLive** | `com.aiolive` | [dami-tv.pro](https://dami-tv.pro) + [cdnlivetv.tv](https://cdnlivetv.tv) | All-in-one: DamiTV events + CDNLiveTV channels |
 | **CDNLiveTV** | `com.cdnlivetv` | [cdnlivetv.tv](https://cdnlivetv.tv) | 762+ global channels, sport events |
 | **DamiTV** | `com.damitv` | [dami-tv.pro](https://dami-tv.pro) | NFL, NBA, Premier League, UFC, MLB, NHL + more |
+
+### AIOLive
+
+- **\uD83D\uDD34 DamiTV Live Now** — All currently live DamiTV events grouped by sport
+- **\uD83D\uDCFA DamiTV Live TV** — Live TV channels from DamiTV grouped by country
+- **\uD83D\uDD34 CDNLiveTV Live Now** — Channels currently online with active viewers
+- **\uD83D\uDCFA CDNLiveTV All Channels** — Browse 762+ channels across 38 countries
+- **\uD83C\uDF0D Country Channels** — US, UK, Spain, Germany, Australia, Brazil and more
+- **\u26BD Sport Events** — Live & upcoming events by sport (Soccer, Basketball, Tennis, Hockey, MMA, Cricket, Golf, Motorsport, +more)
+- **\uD83D\uDD0D Unified Search** — Search across both DamiTV and CDNLiveTV sources
+- **\uD83D\uDD04 Dual-source** — DamiTV events use direct HLS (fast), CDNLiveTV uses WebView extraction
 
 ### CDNLiveTV
 
@@ -49,6 +61,13 @@ Artifacts in each `extensions/*/build/` directory. CI auto-builds on push to `ma
 
 ```
 extensions/
+├── aiolive/             # AIOLive extension (All-in-One)
+│   ├── build.gradle.kts
+│   └── src/main/kotlin/com/aiolive/api/
+│       ├── AIOLivePlugin.kt
+│       ├── AIOLive.kt             # MainAPI (unified search, browse, load, links)
+│       ├── AIOLiveExtractor.kt    # ExtractorApi (WebView-based)
+│       └── Models.kt              # Merged data models
 ├── cdnlivetv/           # CDNLiveTV extension
 │   ├── build.gradle.kts
 │   └── src/main/kotlin/com/cdnlivetv/api/
