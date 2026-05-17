@@ -673,7 +673,7 @@ suspend fun getHindMoviezLinks(
     // Step 1: Follow signed r.php -> f.php (manually handle redirect)
     val rResponse = app.get(signedUrl, allowRedirects = false)
     val fphpUrl = if (rResponse.code == 302) {
-        val loc = rResponse.headers["Location"] ?: return
+        val loc = rResponse.headers["location"] ?: rResponse.headers["Location"] ?: return
         if (loc.startsWith("http")) loc else "https://hshare.ink/$loc"
     } else return
     
@@ -688,8 +688,8 @@ suspend fun getHindMoviezLinks(
 
     val hpageResponse = app.get(hpageUrl, referer = "https://hshare.ink/", allowRedirects = false)
     val directUrl = if (hpageResponse.code == 302) {
-        val loc = hpageResponse.headers["Location"] ?: return
-        if (loc.startsWith("http")) loc else "https://hcloud.ink$loc"
+        val loc = hpageResponse.headers["location"] ?: hpageResponse.headers["Location"] ?: return
+        if (loc.startsWith("http")) loc else "https://hcloud.ink/$loc"
     } else return
 
     val directDoc = app.get(directUrl, referer = "https://hshare.ink/").document
