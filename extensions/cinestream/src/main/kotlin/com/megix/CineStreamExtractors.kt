@@ -2454,35 +2454,44 @@ object CineStreamExtractors {
                 // Step 2: TV show path - navigate through linkstore to find episode links
                 val seasonLinks = detailDoc.select("a[href*='linkstore.zinkcloud.net/']")
                 
-                val seasonLink = seasonLinks.firstOrNull { a ->
+                // Find ALL links for the requested season (multiple quality variants)
+                val matchingSeasonLinks = seasonLinks.filter { a ->
                     a.text().contains(Regex("Season\\s*0*${season}(?:\\s|-|\\$)", RegexOption.IGNORE_CASE))
-                }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: return@safeAmap
+                }.mapNotNull { it.attr("href").takeIf(String::isNotBlank) }
                 
-                val seasonDoc = try { app.get(seasonLink, timeout = 10L).document } catch (_: Exception) { return@safeAmap }
+                if (matchingSeasonLinks.isEmpty()) return@safeAmap
                 
-                // Broadened selector: LinkStore pages use various file hosts
-                // (zinkcloud.net/file/, gdflix.**/file/, gdlink.dev/file/, hubcloud.**/drive/)
-                // Match any link containing "EPISODE - N" text regardless of structure
-                val episodeRegex = Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE)
-                val allEpisodeLinks = seasonDoc.select("a").filter { a ->
-                    episodeRegex.containsMatchIn(a.text()) &&
-                    !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
-                }
-                
-                val episodeUrl = allEpisodeLinks.firstOrNull { a ->
-                    episodeRegex.containsMatchIn(a.text())
-                }?.attr("href") ?: run {
-                    seasonDoc.select("a").firstOrNull { a ->
-                        a.text().contains(Regex("EPISODE", RegexOption.IGNORE_CASE)) &&
+                // Process ALL season quality variants in parallel
+                matchingSeasonLinks.safeAmap { seasonLink ->
+                    val seasonDoc = try { app.get(seasonLink, timeout = 10L).document } catch (_: Exception) { return@safeAmap }
+                    
+                    // Find ALL episode links on this LinkStore page matching our episode
+                    val episodeRegex = Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE)
+                    val episodeLinks = seasonDoc.select("a").filter { a ->
+                        episodeRegex.containsMatchIn(a.text()) &&
                         !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
-                    }?.attr("href") ?: return@safeAmap
-                }
-                
-                // Route by URL type: zinkcloud needs full token flow, others are direct extractors
-                if (episodeUrl.contains("zinkcloud.net/")) {
-                    getZinkLinks(episodeUrl, subtitleCallback, callback)
-                } else {
-                    loadSourceNameExtractor("Zinkmovies", episodeUrl, "", subtitleCallback, callback)
+                    }
+                    
+                    if (episodeLinks.isEmpty()) {
+                        // Fallback: first non-Zip link
+                        val fallback = seasonDoc.select("a").firstOrNull { a ->
+                            a.text().contains(Regex("EPISODE", RegexOption.IGNORE_CASE)) &&
+                            !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
+                        }?.attr("href") ?: return@safeAmap
+                        // Route zinkcloud URLs through token flow, others via extractors
+                        if (fallback.contains("zinkcloud.net/"))
+                            getZinkLinks(fallback, subtitleCallback, callback)
+                        else
+                            loadSourceNameExtractor("Zinkmovies", fallback, "", subtitleCallback, callback)
+                    } else {
+                        episodeLinks.forEach { a ->
+                            val epUrl = a.attr("href")
+                            if (epUrl.contains("zinkcloud.net/"))
+                                getZinkLinks(epUrl, subtitleCallback, callback)
+                            else
+                                loadSourceNameExtractor("Zinkmovies", epUrl, "", subtitleCallback, callback)
+                        }
+                    }
                 }
             }
         }
