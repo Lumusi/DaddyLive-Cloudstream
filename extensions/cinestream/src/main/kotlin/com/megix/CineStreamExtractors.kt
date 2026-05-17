@@ -1460,7 +1460,7 @@ object CineStreamExtractors {
                     val pageDoc = try { app.get(buttonUrl, timeout = 5000L).document } catch (_: Exception) { return@safeAmap }
                     
                     // Find episode by text matching "Episode N"
-                    val epRegex = Regex("Episode\\s+0*$episode(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE)
+                    val epRegex = Regex("Episode\\s+0*$episode(?:\\s|\\)|\\(|$)", RegexOption.IGNORE_CASE)
                     val episodeLink = pageDoc.select("h3 a").firstOrNull { a ->
                         epRegex.containsMatchIn(a.text())
                     }?.attr("href") ?: return@safeAmap

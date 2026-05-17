@@ -234,8 +234,8 @@ object ProviderRegistry {
         ),
         ProviderDef(
             key = "p_hindmoviez", displayName = "Hindmoviez",
-            executeStandard = { res, subCb, cb -> if (!res.isBollywood) invokeHindmoviez(res.imdbId, res.season, res.episode, subCb, cb) },
-            executeAnime = { res, subCb, cb -> invokeHindmoviez(res.imdbId, res.imdbSeason, res.imdbEpisode, subCb, cb) }
+            executeStandard = { res, subCb, cb -> if (!res.isBollywood) invokeHindmoviez(res.title, res.season, res.episode, subCb, cb) },
+            executeAnime = { res, subCb, cb -> invokeHindmoviez(res.imdbTitle, res.imdbSeason, res.imdbEpisode, subCb, cb) }
         ),
         ProviderDef(
             key = "p_4khdhub", displayName = "4KHDHub",
