@@ -11,7 +11,6 @@ import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
-import java.util.concurrent.atomic.AtomicBoolean
 
 open class AIOLiveExtractor(context: Context) : ExtractorApi() {
     override val name = "AIOLive"
@@ -84,8 +83,11 @@ open class AIOLiveExtractor(context: Context) : ExtractorApi() {
     private suspend fun getVideoUrlWithWebView(context: Context, url: String): String? {
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<String?> { cont ->
-                val captured = AtomicBoolean(false)
                 var webView: WebView? = null
+                val capturedUrls = mutableListOf<String>()
+                val captureLock = Any()
+                var captureTimer: Handler? = null
+                var destroyTimer: Handler? = null
 
                 try {
                     webView = WebView(context).apply {
@@ -145,16 +147,30 @@ open class AIOLiveExtractor(context: Context) : ExtractorApi() {
                             ): android.webkit.WebResourceResponse? {
                                 val reqUrl = request?.url?.toString() ?: return null
 
-                                if (!captured.get() && (
-                                    reqUrl.endsWith(".m3u8", ignoreCase = true) ||
+                                if (reqUrl.endsWith(".m3u8", ignoreCase = true) ||
                                     reqUrl.endsWith(".ms3", ignoreCase = true) ||
                                     (reqUrl.contains("/secure/api/v1/") && reqUrl.contains("playlist"))
-                                )) {
-                                    if (captured.compareAndSet(false, true)) {
-                                        cont.resume(reqUrl, onCancellation = null)
-                                        Handler(Looper.getMainLooper()).postDelayed({
-                                            try { destroy() } catch (_: Exception) {}
-                                        }, 500)
+                                ) {
+                                    synchronized(captureLock) {
+                                        capturedUrls.add(reqUrl)
+
+                                        captureTimer?.removeCallbacksAndMessages(null)
+
+                                        captureTimer = Handler(Looper.getMainLooper()).also { h ->
+                                            h.postDelayed({
+                                                synchronized(captureLock) {
+                                                    if (capturedUrls.isNotEmpty() && !cont.isCompleted) {
+                                                        val lastUrl = capturedUrls.last()
+                                                        cont.resume(lastUrl, onCancellation = null)
+                                                        destroyTimer = Handler(Looper.getMainLooper()).also { dh ->
+                                                            dh.postDelayed({
+                                                                try { webView?.destroy() } catch (_: Exception) {}
+                                                            }, 500)
+                                                        }
+                                                    }
+                                                }
+                                            }, 2000)
+                                        }
                                     }
                                 }
                                 return super.shouldInterceptRequest(view, request)
@@ -173,23 +189,29 @@ open class AIOLiveExtractor(context: Context) : ExtractorApi() {
                     webView.loadUrl(url)
 
                     Handler(Looper.getMainLooper()).postDelayed({
-                        if (captured.compareAndSet(false, true)) {
-                            cont.resume(null, onCancellation = null)
-                            try { webView?.destroy() } catch (_: Exception) {}
+                        synchronized(captureLock) {
+                            if (!cont.isCompleted) {
+                                if (capturedUrls.isNotEmpty()) {
+                                    cont.resume(capturedUrls.last(), onCancellation = null)
+                                } else {
+                                    cont.resume(null, onCancellation = null)
+                                }
+                                try { webView?.destroy() } catch (_: Exception) {}
+                            }
                         }
                     }, 30000)
 
                 } catch (e: Exception) {
-                    if (captured.compareAndSet(false, true)) {
+                    if (!cont.isCompleted) {
                         cont.resume(null, onCancellation = null)
                     }
                 }
 
                 cont.invokeOnCancellation {
-                    if (captured.compareAndSet(false, true)) {
-                        Handler(Looper.getMainLooper()).post {
-                            try { webView?.destroy() } catch (_: Exception) {}
-                        }
+                    Handler(Looper.getMainLooper()).post {
+                        captureTimer?.removeCallbacksAndMessages(null)
+                        destroyTimer?.removeCallbacksAndMessages(null)
+                        try { webView?.destroy() } catch (_: Exception) {}
                     }
                 }
             }
