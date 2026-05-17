@@ -2419,7 +2419,6 @@ object CineStreamExtractors {
     ) {
         if (title == null) return
         val searchUrl = "$zinkmoviesAPI/?s=${URLEncoder.encode(title, "UTF-8")}"
-        Log.d("ZinkMovies", "Search: $searchUrl (season=$season episode=$episode)")
         val searchDoc = app.get(searchUrl).document
         
         // More flexible movie/series detection
@@ -2430,58 +2429,38 @@ object CineStreamExtractors {
             .map { it.attr("href") }
             .distinct()
 
-        if (matchUrls.isEmpty()) {
-            Log.d("ZinkMovies", "Search returned no matches for: $title")
-            return
-        }
-        Log.d("ZinkMovies", "Found ${matchUrls.size} match URLs for: $title")
+        if (matchUrls.isEmpty()) return
 
         matchUrls.safeAmap { matchUrl ->
             val detailDoc = app.get(matchUrl).document
             
-            if (season != null && episode != null) {
-                // Series: find the season link on the detail page (linkstore.zinkcloud.net/NNNN/)
+            // Step 1: Try direct zinkcloud.net/file/ links (works for movies)
+            val directFileLinks = detailDoc.select("a[href*='zinkcloud.net/file/']")
+                .map { it.attr("href") }
+            
+            if (directFileLinks.isNotEmpty()) {
+                // Found direct links - process them (movie path)
+                directFileLinks.safeAmap { fileUrl ->
+                    getZinkLinks(fileUrl, subtitleCallback, callback)
+                }
+            } else if (season != null && episode != null) {
+                // Step 2: TV show path - navigate through linkstore to find episode links
                 val seasonLinks = detailDoc.select("a[href*='linkstore.zinkcloud.net/']")
-                Log.d("ZinkMovies", "Found ${seasonLinks.size} season links on detail page")
                 
                 val seasonLink = seasonLinks.firstOrNull { a ->
                     a.text().contains(Regex("Season\\s*0*${season}(?:\\s|-|\$)", RegexOption.IGNORE_CASE))
-                }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: run {
-                    Log.d("ZinkMovies", "No season link found, returning")
-                    return@safeAmap
-                }
-                Log.d("ZinkMovies", "Selected season link: $seasonLink")
+                }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: return@safeAmap
                 
-                val seasonDoc = app.get(seasonLink).document
+                val seasonDoc = try { app.get(seasonLink).document } catch (_: Exception) { return@safeAmap }
                 
-                val allzinkfiles = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
-                Log.d("ZinkMovies", "Found ${allzinkfiles.size} zinkcloud file links on season page")
-                
-                // First try to find the exact episode match
-                val exactEpLink = allzinkfiles.firstOrNull { a ->
-                    a.text().contains(Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE))
-                }?.attr("href")
-                
-                if (exactEpLink != null) {
-                    Log.d("ZinkMovies", "Found exact episode link: ${exactEpLink.substringAfterLast('/')}")
-                    getZinkLinks(exactEpLink, subtitleCallback, callback)
-                } else {
-                    val firstNonZip = allzinkfiles.firstOrNull { a ->
-                        !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
-                    }?.attr("href") ?: run {
-                        Log.d("ZinkMovies", "No non-zip link found, returning")
-                        return@safeAmap
-                    }
-                    Log.d("ZinkMovies", "No exact episode match, using fallback: ${firstNonZip.substringAfterLast('/')}")
-                    getZinkLinks(firstNonZip, subtitleCallback, callback)
-                }
-            } else {
-                // Movie: find all ZinkCloud file links
-                val fileLinks = detailDoc.select("a[href*='zinkcloud.net/file/']")
+                val episodeLinks = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
                     .map { it.attr("href") }
                 
-                fileLinks.safeAmap { fileUrl ->
-                    getZinkLinks(fileUrl, subtitleCallback, callback)
+                if (episodeLinks.isNotEmpty()) {
+                    episodeLinks.safeAmap { zinkUrl ->
+                        // Try each zinkcloud file link (exact episode match or fallback)
+                        getZinkLinks(zinkUrl, subtitleCallback, callback)
+                    }
                 }
             }
         }
