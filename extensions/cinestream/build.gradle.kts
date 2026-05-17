@@ -15,6 +15,10 @@ android {
     }
 }
 
+android {
+    namespace = "com.megix"
+}
+
 cloudstream {
     // language = "en"
     description = "One stop solution for Movies, Series, Anime, AsianDrama and Torrents"
