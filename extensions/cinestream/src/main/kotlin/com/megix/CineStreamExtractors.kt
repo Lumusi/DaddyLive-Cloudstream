@@ -2418,7 +2418,9 @@ object CineStreamExtractors {
         callback: (ExtractorLink) -> Unit
     ) {
         if (title == null) return
-        val searchDoc = app.get("$zinkmoviesAPI/?s=${URLEncoder.encode(title, "UTF-8")}").document
+        val searchUrl = "$zinkmoviesAPI/?s=${URLEncoder.encode(title, "UTF-8")}"
+        Log.d("ZinkMovies", "Search: $searchUrl (season=$season episode=$episode)")
+        val searchDoc = app.get(searchUrl).document
         
         // More flexible movie/series detection
         val matchUrls = searchDoc.select("article a[href*='/movies/'], article a[href*='/tv/']")
@@ -2428,27 +2430,32 @@ object CineStreamExtractors {
             .map { it.attr("href") }
             .distinct()
 
-        if (matchUrls.isEmpty()) return
+        if (matchUrls.isEmpty()) {
+            Log.d("ZinkMovies", "Search returned no matches for: $title")
+            return
+        }
+        Log.d("ZinkMovies", "Found ${matchUrls.size} match URLs for: $title")
 
         matchUrls.safeAmap { matchUrl ->
             val detailDoc = app.get(matchUrl).document
             
             if (season != null && episode != null) {
                 // Series: find the season link on the detail page (linkstore.zinkcloud.net/NNNN/)
-                // Season links look like "Season XX-720P WEB-DL" or "Season XX-1080P ..."
                 val seasonLinks = detailDoc.select("a[href*='linkstore.zinkcloud.net/']")
+                Log.d("ZinkMovies", "Found ${seasonLinks.size} season links on detail page")
                 
-                // Try to find a link matching the requested season number.
-                // Fall back to the first linkstore link if no season match (e.g. "Season 01-..." or "-Season 01-...")
                 val seasonLink = seasonLinks.firstOrNull { a ->
                     a.text().contains(Regex("Season\\s*0*${season}(?:\\s|-|\$)", RegexOption.IGNORE_CASE))
-                }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: return@safeAmap
+                }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: run {
+                    Log.d("ZinkMovies", "No season link found, returning")
+                    return@safeAmap
+                }
+                Log.d("ZinkMovies", "Selected season link: $seasonLink")
                 
-                // Navigate to the season page to find episode links
                 val seasonDoc = app.get(seasonLink).document
                 
-                // Find zinkcloud file links on the season page (e.g. "EPISODE - 01 (239.25 MB)")
                 val allzinkfiles = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
+                Log.d("ZinkMovies", "Found ${allzinkfiles.size} zinkcloud file links on season page")
                 
                 // First try to find the exact episode match
                 val exactEpLink = allzinkfiles.firstOrNull { a ->
@@ -2456,12 +2463,16 @@ object CineStreamExtractors {
                 }?.attr("href")
                 
                 if (exactEpLink != null) {
+                    Log.d("ZinkMovies", "Found exact episode link: ${exactEpLink.substringAfterLast('/')}")
                     getZinkLinks(exactEpLink, subtitleCallback, callback)
                 } else {
-                    // Fallback: try the first zinkcloud file link that isn't "All Episodes Zip"
                     val firstNonZip = allzinkfiles.firstOrNull { a ->
                         !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
-                    }?.attr("href") ?: return@safeAmap
+                    }?.attr("href") ?: run {
+                        Log.d("ZinkMovies", "No non-zip link found, returning")
+                        return@safeAmap
+                    }
+                    Log.d("ZinkMovies", "No exact episode match, using fallback: ${firstNonZip.substringAfterLast('/')}")
                     getZinkLinks(firstNonZip, subtitleCallback, callback)
                 }
             } else {
