@@ -2438,7 +2438,7 @@ object CineStreamExtractors {
         if (matchUrls.isEmpty()) return
 
         matchUrls.safeAmap { matchUrl ->
-            val detailDoc = app.get(matchUrl).document
+            val detailDoc = app.get(matchUrl, timeout = 10L).document
             
             // Step 1: Try direct zinkcloud.net/file/ links (works for movies)
             val directFileLinks = detailDoc.select("a[href*='zinkcloud.net/file/']")
@@ -2457,16 +2457,13 @@ object CineStreamExtractors {
                     a.text().contains(Regex("Season\\s*0*${season}(?:\\s|-|\$)", RegexOption.IGNORE_CASE))
                 }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: return@safeAmap
                 
-                val seasonDoc = try { app.get(seasonLink).document } catch (_: Exception) { return@safeAmap }
+                val seasonDoc = try { app.get(seasonLink, timeout = 10L).document } catch (_: Exception) { return@safeAmap }
                 
-                // Find the specific episode link on the season page matching the app's episode number
-                // Format: "EPISODE - 01 (239.25 MB)" or similar
                 val allEpisodeLinks = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
                 
                 val episodeUrl = allEpisodeLinks.firstOrNull { a ->
                     a.text().contains(Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE))
                 }?.attr("href") ?: run {
-                    // Fallback: first link that isn't "All Episodes Zip"
                     allEpisodeLinks.firstOrNull { a ->
                         !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
                     }?.attr("href") ?: return@safeAmap
