@@ -374,14 +374,24 @@ class DamiTV : MainAPI() {
 
             var foundAny = false
             for ((qualityLabel, streamUrl) in qualityUrls) {
-                val encodedUrl = java.net.URLEncoder.encode(streamUrl.removePrefix("$mainUrl"), "UTF-8")
+                // Try to convert /cdn-stream/ URLs to /live-hls/ URLs for live playback
+                // /cdn-stream/ serves VOD-style playlists with #EXT-X-ENDLIST
+                // /live-hls/ serves true live playlists that continuously refresh
+                val liveStreamUrl = if (streamUrl.contains("/cdn-stream/")) {
+                    val pathPart = streamUrl.removePrefix("$mainUrl/cdn-stream/")
+                    "$mainUrl/live-hls/channel/$pathPart/playlist.m3u8"
+                } else {
+                    streamUrl
+                }
+
+                val encodedUrl = java.net.URLEncoder.encode(liveStreamUrl.removePrefix("$mainUrl"), "UTF-8")
                 val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
 
                 try {
                     val wrapped = newExtractorLink(
                         source = name,
                         name = "$qualityLabel ${channel.name ?: "Channel"}",
-                        url = streamUrl,
+                        url = liveStreamUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = playerReferer

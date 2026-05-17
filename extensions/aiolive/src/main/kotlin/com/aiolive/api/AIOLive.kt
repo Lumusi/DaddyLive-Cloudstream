@@ -645,14 +645,24 @@ class AIOLive : MainAPI() {
 
         var foundAny = false
         for ((qualityLabel, streamUrl) in qualityUrls) {
-            val encodedUrl = java.net.URLEncoder.encode(streamUrl.removePrefix("$mainUrl"), "UTF-8")
+            // Try to convert /cdn-stream/ URLs to /live-hls/ URLs for live playback
+            // /cdn-stream/ serves VOD-style playlists with #EXT-X-ENDLIST
+            // /live-hls/ serves true live playlists that continuously refresh
+            val liveStreamUrl = if (streamUrl.contains("/cdn-stream/")) {
+                val pathPart = streamUrl.removePrefix("$mainUrl/cdn-stream/")
+                "$mainUrl/live-hls/channel/$pathPart/playlist.m3u8"
+            } else {
+                streamUrl
+            }
+
+            val encodedUrl = java.net.URLEncoder.encode(liveStreamUrl.removePrefix("$mainUrl"), "UTF-8")
             val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
 
             try {
                 val wrapped = newExtractorLink(
                     source = name,
                     name = "$qualityLabel ${channel.name ?: "Channel"}",
-                    url = streamUrl,
+                    url = liveStreamUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
                     this.referer = playerReferer
@@ -831,27 +841,50 @@ class AIOLive : MainAPI() {
                 val chName = ch.name ?: continue
                 val chCode = ch.code ?: "us"
                 val sourceLabel = cdnCodeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
-                val sourceUrl = buildCdnPlayerUrl(chName, chCode)
 
-                loadExtractor(
-                    url = sourceUrl,
-                    subtitleCallback = subtitleCallback,
-                    callback = { link ->
-                        val wrapped = runBlocking {
-                            newExtractorLink(
-                                source = "${link.source} [$sourceLabel]",
-                                name = "${link.name} [$sourceLabel]",
-                                url = link.url,
-                                type = link.type
-                            ) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                                this.headers = link.headers
-                            }
-                        }
-                        callback(wrapped)
+                // Try direct URL from API first (may be a true live HLS URL)
+                val directUrl = ch.url?.takeIf { it.isNotBlank() && it.endsWith(".m3u8", ignoreCase = true) }
+
+                if (directUrl != null) {
+                    val wrapped = newExtractorLink(
+                        source = "Direct [$sourceLabel]",
+                        name = "$chName [$sourceLabel]",
+                        url = directUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
+                            "Origin" to mainUrl,
+                            "Referer" to "$mainUrl/"
+                        )
                     }
-                )
+                    callback(wrapped)
+                } else {
+                    // Fallback to player URL with WebView extraction
+                    val sourceUrl = buildCdnPlayerUrl(chName, chCode)
+
+                    loadExtractor(
+                        url = sourceUrl,
+                        subtitleCallback = subtitleCallback,
+                        callback = { link ->
+                            val wrapped = runBlocking {
+                                newExtractorLink(
+                                    source = "${link.source} [$sourceLabel]",
+                                    name = "${link.name} [$sourceLabel]",
+                                    url = link.url,
+                                    type = link.type
+                                ) {
+                                    this.referer = link.referer
+                                    this.quality = link.quality
+                                    this.headers = link.headers
+                                }
+                            }
+                            callback(wrapped)
+                        }
+                    )
+                }
             } catch (_: Exception) { }
         }
 
