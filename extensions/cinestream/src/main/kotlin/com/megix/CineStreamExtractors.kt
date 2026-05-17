@@ -2434,11 +2434,24 @@ object CineStreamExtractors {
             val detailDoc = app.get(matchUrl).document
             
             if (season != null && episode != null) {
-                // Series: find the specific episode link
-                // We look for links that contain "Episode X" or match the EP pattern
-                val episodeLink = detailDoc.select("a").firstOrNull { a ->
-                    a.text().contains(Regex("Episode\\s*${episode}", RegexOption.IGNORE_CASE))
-                }?.attr("href") ?: return@safeAmap
+                // Series: find the season link on the detail page (linkstore.zinkcloud.net/NNNN/)
+                // Season links look like "Season XX-720P WEB-DL" or "Season XX-1080P ..."
+                val seasonLinks = detailDoc.select("a[href*='linkstore.zinkcloud.net/']")
+                
+                // Try to find a link matching the requested season number
+                val seasonLink = seasonLinks.firstOrNull { a ->
+                    val text = a.text()
+                    text.contains(Regex("Season\\s*0*${season}(?:\\s|-|\$)", RegexOption.IGNORE_CASE))
+                }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: return@safeAmap
+                
+                // Navigate to the season page to find episode links
+                val seasonDoc = app.get(seasonLink).document
+                
+                // Find the specific episode link, e.g. "EPISODE - 01 (239.25 MB)"
+                val episodeLink = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
+                    .firstOrNull { a ->
+                        a.text().contains(Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\$)", RegexOption.IGNORE_CASE))
+                    }?.attr("href") ?: return@safeAmap
                 
                 getZinkLinks(episodeLink, subtitleCallback, callback)
             } else {
