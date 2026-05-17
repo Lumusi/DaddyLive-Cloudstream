@@ -529,50 +529,27 @@ class CDNLiveTV : MainAPI() {
                 val chName = ch.name ?: continue
                 val chCode = ch.code ?: "us"
                 val sourceLabel = codeNames[ch.code?.lowercase()] ?: ch.code?.uppercase() ?: "Unknown"
+                val sourceUrl = buildPlayerUrl(chName, chCode)
 
-                // Try direct URL from API first (may be a true live HLS URL)
-                val directUrl = ch.url?.takeIf { it.isNotBlank() && it.endsWith(".m3u8", ignoreCase = true) }
-
-                if (directUrl != null) {
-                    val wrapped = newExtractorLink(
-                        source = "Direct [$sourceLabel]",
-                        name = "$chName [$sourceLabel]",
-                        url = directUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "https://cdnlivetv.tv/"
-                        this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
-                            "Origin" to "https://cdnlivetv.tv",
-                            "Referer" to "https://cdnlivetv.tv/"
-                        )
-                    }
-                    callback(wrapped)
-                } else {
-                    // Fallback to player URL with WebView extraction
-                    val sourceUrl = buildPlayerUrl(chName, chCode)
-
-                    loadExtractor(
-                        url = sourceUrl,
-                        subtitleCallback = subtitleCallback,
-                        callback = { link ->
-                            val wrapped = runBlocking {
-                                newExtractorLink(
-                                    source = "${link.source} [$sourceLabel]",
-                                    name = "${link.name} [$sourceLabel]",
-                                    url = link.url,
-                                    type = link.type
-                                ) {
-                                    this.referer = link.referer
-                                    this.quality = link.quality
-                                    this.headers = link.headers
-                                }
+                loadExtractor(
+                    url = sourceUrl,
+                    subtitleCallback = subtitleCallback,
+                    callback = { link ->
+                        val wrapped = runBlocking {
+                            newExtractorLink(
+                                source = "${link.source} [$sourceLabel]",
+                                name = "${link.name} [$sourceLabel]",
+                                url = link.url,
+                                type = link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
                             }
-                            callback(wrapped)
                         }
-                    )
-                }
+                        callback(wrapped)
+                    }
+                )
             } catch (_: Exception) { /* skip failed source */ }
         }
 
