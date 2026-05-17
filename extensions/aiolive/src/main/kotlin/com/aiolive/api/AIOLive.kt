@@ -798,15 +798,17 @@ class AIOLive : MainAPI() {
                     url = targetUrl,
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
-                        val wrapped = newExtractorLink(
-                            source = "${link.source} [$sourceLabel]",
-                            name = "${link.name} [$sourceLabel]",
-                            url = link.url,
-                            type = link.type
-                        ) {
-                            this.referer = link.referer
-                            this.quality = link.quality
-                            this.headers = link.headers
+                        val wrapped = runBlocking {
+                            newExtractorLink(
+                                source = "${link.source} [$sourceLabel]",
+                                name = "${link.name} [$sourceLabel]",
+                                url = link.url,
+                                type = link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
                         }
                         callback(wrapped)
                     }
@@ -859,15 +861,17 @@ class AIOLive : MainAPI() {
                     url = targetUrl,
                     subtitleCallback = subtitleCallback,
                     callback = { link ->
-                        val wrapped = newExtractorLink(
-                            source = "${link.source} [$sourceLabel]",
-                            name = "${link.name} $chName",
-                            url = link.url,
-                            type = link.type
-                        ) {
-                            this.referer = link.referer
-                            this.quality = link.quality
-                            this.headers = link.headers
+                        val wrapped = runBlocking {
+                            newExtractorLink(
+                                source = "${link.source} [$sourceLabel]",
+                                name = "${link.name} $chName",
+                                url = link.url,
+                                type = link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
                         }
                         callback(wrapped)
                     }
