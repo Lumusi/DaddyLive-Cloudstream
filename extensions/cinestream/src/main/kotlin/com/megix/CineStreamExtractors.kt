@@ -1434,44 +1434,58 @@ object CineStreamExtractors {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        app.get("$hindMoviezAPI/?s=$id", timeout = 5000L).document.select("h2.entry-title > a").safeAmap {
-
-            val doc = app.get(it.attr("href"), timeout = 5000L).document
-            if(episode == null) {
-                doc.select("a.maxbutton").safeAmap {
-
-                    val res = app.get(it.attr("href"), timeout = 5000L).document
-
-                    val link = res.selectFirst("a.get-link-btn")
-                        ?.attr("href")
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { href ->
-                            val baseurl=href.substringBefore("/?id=")
-                            val rawId = href.substringAfter("id=")
-                            hindmoviezsignHShare(rawId, baseurl)
-                        }
-                        ?: return@safeAmap
-
-                    getHindMoviezLinks("HindMoviez", link, subtitleCallback, callback)
-                }
-            }
-            else {
-                doc.select("a.maxbutton").safeAmap {
-                    val text = it.parent()?.parent()?.previousElementSibling()?.text() ?: ""
-                    if(text.contains("Season $season")) {
-                        val res = app.get(it.attr("href"), timeout = 5000L).document
-                        val link = res.select("h3 > a")
-                            .getOrNull(episode-1)
-                            ?.attr("href")
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let { href ->
-                                val baseurl = href.substringBefore("/?id=")
-                                val rawId = href.substringAfter("id=")
-                                hindmoviezsignHShare(rawId, baseurl)
-
-                            } ?: return@safeAmap
-
-                        getHindMoviezLinks("HindMoviez", link, subtitleCallback, callback)
+        if (id == null) return
+        val searchDoc = app.get("$hindMoviezAPI/?s=$id", timeout = 5000L).document
+        val detailUrls = searchDoc.select("h2.entry-title > a")
+            .mapNotNull { it.attr("href").takeIf(String::isNotBlank) }
+            .distinct()
+        
+        if (detailUrls.isEmpty()) return
+        
+        detailUrls.safeAmap { detailUrl ->
+            val detailDoc = app.get(detailUrl, timeout = 5000L).document
+            
+            // Find ALL maxbutton links (quality/download variants)
+            val maxButtons = detailDoc.select("a.maxbutton")
+                .mapNotNull { it.attr("href").takeIf(String::isNotBlank) }
+                .distinct()
+            
+            if (maxButtons.isEmpty()) return@safeAmap
+            
+            maxButtons.safeAmap { buttonUrl ->
+                if (episode != null) {
+                    // TV show path: maxbutton -> mvlink.blog/web/{ID} -> episode list
+                    if (!buttonUrl.contains("/web/")) return@safeAmap
+                    
+                    val pageDoc = try { app.get(buttonUrl, timeout = 5000L).document } catch (_: Exception) { return@safeAmap }
+                    
+                    // Find episode by text matching "Episode N"
+                    val epRegex = Regex("Episode\\s+0*$episode(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE)
+                    val episodeLink = pageDoc.select("h3 a").firstOrNull { a ->
+                        epRegex.containsMatchIn(a.text())
+                    }?.attr("href") ?: return@safeAmap
+                    
+                    val rawId = episodeLink.substringAfter("?id=")
+                    if (rawId.isBlank()) return@safeAmap
+                    
+                    val signedUrl = hindmoviezsignHShare(rawId, "https://hshare.ink")
+                    getHindMoviezLinks("Hindmoviez", signedUrl, subtitleCallback, callback)
+                    
+                } else {
+                    // Movie path: maxbutton -> mvlink.blog/{ID}
+                    // Note: mvlink.blog/{ID} currently returns 404 for most movies
+                    val pageDoc = try { app.get(buttonUrl, timeout = 5000L).document } catch (_: Exception) { return@safeAmap }
+                    
+                    // Get hshare.ink links from the page
+                    val hshareLinks = pageDoc.select("a[href*='hshare.ink']")
+                    
+                    if (hshareLinks.isEmpty()) return@safeAmap
+                    
+                    hshareLinks.safeAmap { a ->
+                        val rawId = a.attr("href").substringAfter("?id=")
+                        if (rawId.isBlank()) return@safeAmap
+                        val signedUrl = hindmoviezsignHShare(rawId, "https://hshare.ink")
+                        getHindMoviezLinks("Hindmoviez", signedUrl, subtitleCallback, callback)
                     }
                 }
             }

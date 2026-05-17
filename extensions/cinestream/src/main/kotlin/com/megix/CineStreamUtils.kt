@@ -666,34 +666,22 @@ fun hindmoviezsignHShare(rawId: String, domain: String): String {
 
 suspend fun getHindMoviezLinks(
     source: String,
-    url: String,
+    signedUrl: String,
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ) {
-    val response = app.get(url)
-    val doc = response.document
+    val doc = app.get(signedUrl).document
     val name = doc.select("div.container p:contains(Name:)").text().substringAfter("Name: ")
     val fileSize = doc.select("div.container p:contains(Size:)").text().substringAfter("Size: ")
     val simplifiedTitle = getSimplifiedTitle(name + fileSize)
-    val link = doc.select("a.btn-info").attr("href")
-    val document = app.get(link, timeout = 30000L).document
 
-    document.select("a.button").safeAmap {
-        val source = it.attr("href")
-
-        callback.invoke(
-            newExtractorLink(
-                "Hindmoviez",
-                "Hindmoviez $simplifiedTitle $fileSize",
-                source,
-                ExtractorLinkType.VIDEO
-            ) {
-                this.quality = getIndexQuality(name)
-            }
-        )
-
+    // Extract all mirror download buttons directly from f.php page
+    doc.select("a.btn-success, a.btn-info, a.btn-warning, a.btn-danger, a.btn-primary").safeAmap {
+        val mirrorUrl = it.attr("href")
+        if (mirrorUrl.isNotBlank()) {
+            loadSourceNameExtractor(source, mirrorUrl, "", subtitleCallback, callback)
+        }
     }
-
 }
 
 //For Extractor new domain
