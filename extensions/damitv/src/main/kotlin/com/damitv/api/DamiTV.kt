@@ -374,14 +374,16 @@ class DamiTV : MainAPI() {
 
             var foundAny = false
             for ((qualityLabel, streamUrl) in qualityUrls) {
-                val encodedUrl = java.net.URLEncoder.encode(streamUrl.removePrefix("$mainUrl"), "UTF-8")
-                val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
+                val fullStreamUrl = if (streamUrl.startsWith("http")) streamUrl else "$mainUrl$streamUrl"
+                val encodedUrl = java.net.URLEncoder.encode(java.net.URLEncoder.encode(fullStreamUrl, "UTF-8"), "UTF-8")
+                val channelDisplayName = channel.name?.replace(" ", "%20") ?: "Live"
+                val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=$channelDisplayName"
 
                 try {
                     val wrapped = newExtractorLink(
                         source = name,
                         name = "$qualityLabel ${channel.name ?: "Channel"}",
-                        url = streamUrl,
+                        url = fullStreamUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = playerReferer
@@ -435,7 +437,7 @@ class DamiTV : MainAPI() {
                 val sourceLabel = src.source ?: "Source"
                 val sourceId = src.id!!
                 val sourceStreamUrl = "$mainUrl/live-hls/channel/$sourceId/playlist.m3u8"
-                val encodedUrl = java.net.URLEncoder.encode("/live-hls/channel/$sourceId/playlist.m3u8", "UTF-8")
+                val encodedUrl = java.net.URLEncoder.encode(java.net.URLEncoder.encode(sourceStreamUrl, "UTF-8"), "UTF-8")
                 val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
 
                 try {
@@ -457,7 +459,7 @@ class DamiTV : MainAPI() {
 
         // Single source: use the primary matchId
         val streamUrl = "$mainUrl/live-hls/channel/$matchId/playlist.m3u8"
-        val encodedUrl = java.net.URLEncoder.encode("/live-hls/channel/$matchId/playlist.m3u8", "UTF-8")
+        val encodedUrl = java.net.URLEncoder.encode(java.net.URLEncoder.encode(streamUrl, "UTF-8"), "UTF-8")
         val playerReferer = "$mainUrl/player/hls/?v=244&url=$encodedUrl&name=Live"
 
         try {
