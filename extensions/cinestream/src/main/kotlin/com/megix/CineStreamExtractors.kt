@@ -2438,22 +2438,32 @@ object CineStreamExtractors {
                 // Season links look like "Season XX-720P WEB-DL" or "Season XX-1080P ..."
                 val seasonLinks = detailDoc.select("a[href*='linkstore.zinkcloud.net/']")
                 
-                // Try to find a link matching the requested season number
+                // Try to find a link matching the requested season number.
+                // Fall back to the first linkstore link if no season match (e.g. "Season 01-..." or "-Season 01-...")
                 val seasonLink = seasonLinks.firstOrNull { a ->
-                    val text = a.text()
-                    text.contains(Regex("Season\\s*0*${season}(?:\\s|-|\$)", RegexOption.IGNORE_CASE))
+                    a.text().contains(Regex("Season\\s*0*${season}(?:\\s|-|\$)", RegexOption.IGNORE_CASE))
                 }?.attr("href") ?: seasonLinks.firstOrNull()?.attr("href") ?: return@safeAmap
                 
                 // Navigate to the season page to find episode links
                 val seasonDoc = app.get(seasonLink).document
                 
-                // Find the specific episode link, e.g. "EPISODE - 01 (239.25 MB)"
-                val episodeLink = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
-                    .firstOrNull { a ->
-                        a.text().contains(Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\$)", RegexOption.IGNORE_CASE))
-                    }?.attr("href") ?: return@safeAmap
+                // Find zinkcloud file links on the season page (e.g. "EPISODE - 01 (239.25 MB)")
+                val allzinkfiles = seasonDoc.select("article a[href*='zinkcloud.net/file/']")
                 
-                getZinkLinks(episodeLink, subtitleCallback, callback)
+                // First try to find the exact episode match
+                val exactEpLink = allzinkfiles.firstOrNull { a ->
+                    a.text().contains(Regex("(?:Episode|EPISODE)\\s*[-:]?\\s*0*${episode}(?:\\s|\\)|\\()", RegexOption.IGNORE_CASE))
+                }?.attr("href")
+                
+                if (exactEpLink != null) {
+                    getZinkLinks(exactEpLink, subtitleCallback, callback)
+                } else {
+                    // Fallback: try the first zinkcloud file link that isn't "All Episodes Zip"
+                    val firstNonZip = allzinkfiles.firstOrNull { a ->
+                        !a.text().contains(Regex("All\\s+Episodes\\s+Zip", RegexOption.IGNORE_CASE))
+                    }?.attr("href") ?: return@safeAmap
+                    getZinkLinks(firstNonZip, subtitleCallback, callback)
+                }
             } else {
                 // Movie: find all ZinkCloud file links
                 val fileLinks = detailDoc.select("a[href*='zinkcloud.net/file/']")
